@@ -1,0 +1,17 @@
+python federated_main.py \
+    --alg fedlora \
+    --model vit \
+    --dataset cifar \
+    --epochs 80 \
+    --num_users 100 \
+    --frac 0.1 \
+    --local_ep 5 \
+    --local_bs 32 \
+    --lr 0.001 \
+    --optimizer adam \
+    --lora_r 8 \
+    --lora_alpha 16 \
+    --lora_train_mlp_head 1 \
+    --dirichlet_alpha 100 \
+    --gpu 0 \
+    --log_subdir fedlora_vit_cifar_E80_alpha100
