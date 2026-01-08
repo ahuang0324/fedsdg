@@ -14,14 +14,16 @@ EPOCHS=70
 NUM_USERS=100
 FRAC=0.1
 LOCAL_EP=5
-LOCAL_BS=32
+LOCAL_BS=128
 LR=0.0003
 OPTIMIZER="adam"
-DIRICHLET_ALPHA=0.5
-GPU=2
+DIRICHLET_ALPHA=0.1
+GPU=1
 LOG_SUBDIR="fedavg_pretrained_vit_cifar100_E${EPOCHS}_lr${LR}_offline_alpha${DIRICHLET_ALPHA}"
 OFFLINE_DATA_ROOT="../data/preprocessed/"
+
 # =================================================
+
 
 export HF_ENDPOINT=https://hf-mirror.com
 
@@ -46,6 +48,7 @@ echo ""
 echo "=========================================="
 echo ""
 
+
 python3 federated_main.py \
     --alg ${ALG} \
     --model ${MODEL} \
@@ -64,6 +67,7 @@ python3 federated_main.py \
     --dirichlet_alpha ${DIRICHLET_ALPHA} \
     --gpu ${GPU} \
     --log_subdir ${LOG_SUBDIR}
+
 
 echo ""
 echo "=========================================="

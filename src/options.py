@@ -37,12 +37,21 @@ def args_parser():
                         help='Whether to train mlp_head in FedLoRA (1=True, 0=False), default=1')
     
     # ==================== FedSDG 专用参数 ====================
+    # 服务端聚合算法选择
+    # - 'fedavg': 使用传统的 FedAvg 均匀加权聚合（默认）
+    # - 'alignment': 使用基于对齐度加权的 FedSDG 聚合算法
+    parser.add_argument('--server_agg_method', type=str, default='fedavg', 
+                        choices=['fedavg', 'alignment'],
+                        help='FedSDG: 服务端聚合算法选择 - fedavg: 均匀加权聚合, alignment: 基于对齐度加权聚合 (default=fedavg)')
+    
     # 根据 FedSDG_Design.md 中的 Equation 5 定义的正则化系数
     # Loss = TaskLoss + λ₁ Σ|m_{k,l}| + λ₂ ||θ_{p,k}||²₂
     parser.add_argument('--lambda1', type=float, default=1e-3,
                         help='FedSDG: L1 门控稀疏性惩罚系数 λ₁，鼓励门控参数稀疏化 (default=1e-3)')
     parser.add_argument('--lambda2', type=float, default=1e-4,
                         help='FedSDG: L2 私有参数正则化系数 λ₂，限制私有参数容量 (default=1e-4)')
+    parser.add_argument('--gate_penalty_type', type=str, default='bilateral', choices=['unilateral', 'bilateral'],
+                        help='FedSDG: 门控惩罚类型 - unilateral: |m_k| 单边(推向0), bilateral: min(m_k,1-m_k) 双边(推向0或1) (default=bilateral)')
     
     # FedSDG 学习率配置（根据 proposal 设计）
     # 三组参数使用不同学习率：ηg (共享), ηp (私有), ηm (门控)
@@ -50,6 +59,12 @@ def args_parser():
                         help='FedSDG: 门控参数学习率 ηm (default=1e-2)')
     parser.add_argument('--grad_clip', type=float, default=1.0,
                         help='FedSDG: 梯度裁剪范数 (default=1.0, 0表示不裁剪)')
+    # =========================================================
+    
+    # ==================== 双重评估机制参数 ====================
+    parser.add_argument('--test_frac', type=float, default=0.2,
+                        help='Fraction of clients to sample for local personalization evaluation (default=0.2). '
+                             'Set to 1.0 to evaluate all clients. Lower values speed up evaluation.')
     # =========================================================
 
     # model arguments

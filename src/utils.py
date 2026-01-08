@@ -7,7 +7,7 @@ import os
 import numpy as np
 import torch
 from torchvision import datasets, transforms
-from sampling import dirichlet_partition
+from sampling import dirichlet_partition, dirichlet_partition_train_test
 from offline_dataset import OfflineCIFAR10, OfflineCIFAR100
 
 
@@ -188,8 +188,21 @@ def get_dataset(args):
         raise NotImplementedError()
 
     alpha = float(args.dirichlet_alpha)
-    user_groups = dirichlet_partition(train_dataset, args.num_users, alpha=alpha, min_size=20)
-    print(f"Partitioning complete: Alpha: {alpha}")
+    
+    # ==================== 双重评估机制：同时划分训练集和测试集 ====================
+    # 使用新的 dirichlet_partition_train_test 函数，确保每个客户端的训练集和测试集
+    # 具有相同的标签分布，用于本地个性化性能评估
+    user_groups_train, user_groups_test = dirichlet_partition_train_test(
+        train_dataset, test_dataset, args.num_users, alpha=alpha, min_size=20
+    )
+    print(f"Partitioning complete (Train + Test): Alpha: {alpha}")
+    print(f"  - Train samples per client: min={min(len(v) for v in user_groups_train.values())}, "
+          f"max={max(len(v) for v in user_groups_train.values())}, "
+          f"avg={np.mean([len(v) for v in user_groups_train.values()]):.1f}")
+    print(f"  - Test samples per client: min={min(len(v) for v in user_groups_test.values())}, "
+          f"max={max(len(v) for v in user_groups_test.values())}, "
+          f"avg={np.mean([len(v) for v in user_groups_test.values()]):.1f}")
+    # ============================================================================
 
     # 提示（用于后续画热力图验证 Non-IID 程度）：
     # 1) 取出训练集标签 targets（MNIST/CIFAR10 通常是 dataset.targets）
@@ -197,7 +210,7 @@ def get_dataset(args):
     # 3) 将每个 client 的类别直方图堆叠成矩阵，即可绘制 heatmap
     # 注意：alpha 越小越异构，alpha 越大（如 100）越接近 IID。
 
-    # 额外支持：自动绘制“客户端-类别分布”热力图，并输出到 ../save/objects/ 下
+    # 额外支持：自动绘制"客户端-类别分布"热力图，并输出到 ../save/objects/ 下
     # - 行：client_id（0..num_users-1）
     # - 列：class_id（0..num_classes-1）
     # - 值：该客户端该类别的样本数
@@ -212,7 +225,7 @@ def get_dataset(args):
     if targets is not None:
         num_classes = int(np.max(targets)) + 1
         dist = np.zeros((args.num_users, num_classes), dtype=np.int64)
-        for client_id, idxs in user_groups.items():
+        for client_id, idxs in user_groups_train.items():
             idxs = np.asarray(idxs, dtype=np.int64)
             dist[client_id] = np.bincount(targets[idxs], minlength=num_classes)
 
@@ -243,7 +256,7 @@ def get_dataset(args):
         except ImportError:
             print('matplotlib not installed; skip client-class heatmap plotting.')
 
-    return train_dataset, test_dataset, user_groups
+    return train_dataset, test_dataset, user_groups_train, user_groups_test
 
 
 def average_weights(w):
@@ -258,15 +271,21 @@ def average_weights(w):
     return w_avg
 
 
-def average_weights_lora(w, global_state_dict):
+def average_weights_lora(w, global_state_dict, agg_method='fedavg', epsilon=1e-8):
     """
-    FedLoRA 专用的选择性聚合函数
+    FedLoRA/FedSDG 专用的选择性聚合函数
     仅聚合包含 'lora_' 关键词的参数（LoRA 低秩矩阵 A 和 B）以及 mlp_head 参数
     其他冻结的骨干权重保持不变
+    
+    支持两种聚合方式：
+    1. fedavg: 传统的 FedAvg 均匀加权聚合
+    2. alignment: 基于对齐度加权的 FedSDG 聚合算法
     
     参数:
         w: 客户端上传的 state_dict 列表 (每个元素是一个 state_dict)
         global_state_dict: 全局模型的完整 state_dict（用于保留冻结权重）
+        agg_method: 聚合方法 ('fedavg' 或 'alignment')
+        epsilon: 数值稳定性参数，防止除零
     
     返回:
         更新后的全局 state_dict（仅 LoRA 参数被聚合更新）
@@ -274,8 +293,7 @@ def average_weights_lora(w, global_state_dict):
     # 1. 深拷贝全局 state_dict 作为基础（保留所有冻结权重）
     w_avg = copy.deepcopy(global_state_dict)
     
-    # 2. 仅对 LoRA 相关参数进行 FedAvg 聚合
-    # 识别所有需要聚合的 LoRA 参数键
+    # 2. 识别所有需要聚合的 LoRA 参数键
     # 注意：需要同时匹配 'mlp_head'（手写 ViT）和 'head'（timm ViT）
     # FedSDG: 排除私有参数（_private）和门控参数（lambda_k）
     lora_keys = [key for key in w[0].keys() 
@@ -287,17 +305,39 @@ def average_weights_lora(w, global_state_dict):
         print("  [WARNING] 未找到任何 LoRA 参数，请检查模型是否正确注入 LoRA")
         return w_avg
     
-    # 3. 对每个 LoRA 参数键进行平均聚合
-    for key in lora_keys:
-        # 初始化为第一个客户端的参数
-        w_avg[key] = copy.deepcopy(w[0][key])
-        # 累加其他客户端的参数
-        for i in range(1, len(w)):
-            w_avg[key] += w[i][key]
-        # 计算平均值
-        w_avg[key] = torch.div(w_avg[key], len(w))
-    
-    print(f"  [FedLoRA] 已聚合 {len(lora_keys)} 个 LoRA 参数键")
+    # 3. 根据聚合方法选择不同的聚合策略
+    if agg_method == 'alignment':
+        # ==================== FedSDG 对齐度加权聚合算法 ====================
+        # 基于余弦相似度的对齐度加权聚合
+        # 核心思想：与平均更新方向一致的客户端获得更高权重，冲突的更新被抑制
+        weights, weight_stats = _compute_alignment_weights(w, global_state_dict, lora_keys, epsilon)
+        
+        # 使用对齐度权重进行加权聚合
+        for key in lora_keys:
+            # 加权求和：θ_g^(t+1) = Σ w_k * θ_g^(k)
+            weighted_sum = torch.zeros_like(w[0][key], dtype=torch.float32)
+            for i, client_w in enumerate(w):
+                weighted_sum += weights[i] * client_w[key].float()
+            w_avg[key] = weighted_sum.to(w[0][key].dtype)
+        
+        # 打印聚合统计信息
+        print(f"  [FedSDG-Alignment] 已聚合 {len(lora_keys)} 个 LoRA 参数键")
+        print(f"  [FedSDG-Alignment] 权重统计: mean={weight_stats['mean']:.4f}, "
+              f"std={weight_stats['std']:.4f}, min={weight_stats['min']:.4f}, "
+              f"max={weight_stats['max']:.4f}, num_zero={weight_stats['num_zero']}")
+    else:
+        # ==================== FedAvg 均匀加权聚合 ====================
+        # 传统的 FedAvg 聚合：所有客户端权重相等
+        for key in lora_keys:
+            # 初始化为第一个客户端的参数
+            w_avg[key] = copy.deepcopy(w[0][key])
+            # 累加其他客户端的参数
+            for i in range(1, len(w)):
+                w_avg[key] += w[i][key]
+            # 计算平均值
+            w_avg[key] = torch.div(w_avg[key], len(w))
+        
+        print(f"  [FedLoRA] 已聚合 {len(lora_keys)} 个 LoRA 参数键")
     
     # 4. 验证返回的是完整的 state_dict（包含所有键）
     # 这确保 load_state_dict() 可以正常工作（strict=True）
@@ -305,6 +345,106 @@ def average_weights_lora(w, global_state_dict):
         f"聚合后的 state_dict 键数量不匹配：{len(w_avg)} vs {len(global_state_dict)}"
     
     return w_avg
+
+
+def _compute_alignment_weights(client_weights, global_state_dict, lora_keys, epsilon=1e-8):
+    """
+    计算 FedSDG 对齐度加权聚合的客户端权重
+    
+    算法流程（基于 FedSDG服务端权重聚合算法.md）：
+    1. 计算每个客户端的参数更新向量 Δθ_g^(k) = θ_g^(k) - θ_g^(t)
+    2. 计算所有更新的平均方向 Δ̄ = (1/M) Σ Δθ_g^(k)
+    3. 计算每个客户端的对齐度分数 α_k = max(0, cos(Δθ_g^(k), Δ̄))
+    4. 归一化权重 w_k = α_k / (Σ α_j + ε)
+    
+    参数:
+        client_weights: 客户端上传的 state_dict 列表
+        global_state_dict: 当前全局模型的 state_dict
+        lora_keys: 需要聚合的参数键列表
+        epsilon: 数值稳定性参数
+    
+    返回:
+        weights: 客户端权重列表 [w_0, w_1, ..., w_{M-1}]
+        weight_stats: 权重统计信息字典
+    """
+    M = len(client_weights)  # 客户端数量
+    
+    # ==================== 边界情况处理 ====================
+    # 情况1：没有客户端
+    if M == 0:
+        return [], {'mean': 0, 'std': 0, 'min': 0, 'max': 0, 'num_zero': 0}
+    
+    # 情况2：只有一个客户端，权重为 1.0
+    if M == 1:
+        return [1.0], {'mean': 1.0, 'std': 0, 'min': 1.0, 'max': 1.0, 'num_zero': 0}
+    
+    # ==================== 步骤1：计算更新向量 ====================
+    # 将参数展平为一维向量，便于计算余弦相似度
+    def flatten_params(state_dict, keys):
+        """将指定键的参数展平为一维向量"""
+        tensors = []
+        for key in keys:
+            if key in state_dict:
+                tensors.append(state_dict[key].flatten().float())
+        return torch.cat(tensors) if tensors else torch.tensor([])
+    
+    # 获取全局参数的展平向量
+    global_flat = flatten_params(global_state_dict, lora_keys)
+    
+    # 计算每个客户端的更新向量 Δθ_g^(k) = θ_g^(k) - θ_g^(t)
+    deltas = []
+    for client_w in client_weights:
+        client_flat = flatten_params(client_w, lora_keys)
+        delta = client_flat - global_flat
+        deltas.append(delta)
+    
+    # ==================== 步骤2：计算平均更新方向 ====================
+    # Δ̄ = (1/M) Σ Δθ_g^(k)
+    delta_stack = torch.stack(deltas)  # shape: [M, num_params]
+    delta_mean = delta_stack.mean(dim=0)  # shape: [num_params]
+    
+    # ==================== 步骤3：计算对齐度分数 ====================
+    # α_k = max(0, <Δθ_g^(k), Δ̄> / (||Δθ_g^(k)||_2 * ||Δ̄||_2 + ε))
+    alphas = []
+    norm_mean = torch.linalg.norm(delta_mean, ord=2)  # ||Δ̄||_2
+    
+    for delta in deltas:
+        # 计算分子：内积 <Δθ_g^(k), Δ̄>
+        numerator = torch.dot(delta, delta_mean)
+        
+        # 计算分母：||Δθ_g^(k)||_2 * ||Δ̄||_2 + ε
+        norm_delta = torch.linalg.norm(delta, ord=2)
+        denominator = norm_delta * norm_mean + epsilon
+        
+        # 计算对齐度分数，使用 max(0, ·) 确保非负
+        # 物理意义：
+        # - α_k ≈ 1: 客户端更新与平均方向高度一致
+        # - α_k ≈ 0: 客户端更新与平均方向正交或相反
+        alpha = max(0.0, (numerator / denominator).item())
+        alphas.append(alpha)
+    
+    # ==================== 步骤4：归一化权重 ====================
+    # w_k = α_k / (Σ α_j + ε)
+    sum_alpha = sum(alphas) + epsilon
+    
+    # 退化情况处理：如果所有对齐度都接近 0，使用均匀权重
+    if sum_alpha < 1e-6:
+        print("  [FedSDG-Alignment] 警告: 所有对齐度接近 0，回退到均匀权重")
+        weights = [1.0 / M] * M
+    else:
+        weights = [alpha / sum_alpha for alpha in alphas]
+    
+    # ==================== 计算权重统计信息 ====================
+    weight_stats = {
+        'mean': np.mean(weights),
+        'std': np.std(weights),
+        'min': min(weights),
+        'max': max(weights),
+        'num_zero': sum(1 for w in weights if w < 1e-6),
+        'alphas': alphas  # 保存原始对齐度分数用于调试
+    }
+    
+    return weights, weight_stats
 
 
 def exp_details(args):
@@ -334,6 +474,12 @@ def exp_details(args):
             print(f'\n    FedSDG specific:')
             print(f'    Dual-path mode     : Enabled (Global + Private branches)')
             print(f'    Private params     : Not communicated (client-local only)')
+            # 显示服务端聚合算法选择
+            agg_method_desc = {
+                'fedavg': 'FedAvg 均匀加权聚合',
+                'alignment': '基于对齐度加权的 FedSDG 聚合算法'
+            }
+            print(f'    Server Aggregation : {args.server_agg_method} ({agg_method_desc.get(args.server_agg_method, "unknown")})')
     print()
     return
 

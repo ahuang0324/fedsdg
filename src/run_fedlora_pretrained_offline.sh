@@ -37,7 +37,7 @@ python federated_main.py \
     --lora_alpha 16 \
     --lora_train_mlp_head 1 \
     --dirichlet_alpha 0.5 \
-    --gpu 1 \
+    --gpu 2 \
     --log_subdir fedlora_pretrained_vit_cifar_E80_lr0.0003_offline_alpha0.5
 
 # 预期效果：

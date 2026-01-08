@@ -14,14 +14,14 @@ EPOCHS=70
 NUM_USERS=100
 FRAC=0.1
 LOCAL_EP=5
-LOCAL_BS=32
-LR=0.0003
+LOCAL_BS=128
+LR=0.001
 OPTIMIZER="adam"
 LORA_R=8
 LORA_ALPHA=16
 DIRICHLET_ALPHA=0.1
 GPU=2
-LOG_SUBDIR="fedlora_pretrained_vit_cifar100_E${EPOCHS}_r${LORA_R}_lr${LR}_offline_alpha${DIRICHLET_ALPHA}"
+LOG_SUBDIR="fedlora_pretrained_vit_cifar100_E${EPOCHS}_r${LORA_R}_lr${LR}_offline_alpha${DIRICHLET_ALPHA}_bs${LOCAL_BS}_localtest"
 OFFLINE_DATA_ROOT="../data/preprocessed/"
 # =================================================
 

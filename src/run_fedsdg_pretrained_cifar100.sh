@@ -9,25 +9,28 @@ MODEL_VARIANT="pretrained"
 DATASET="cifar100"
 NUM_CLASSES=100
 IMAGE_SIZE=224
-EPOCHS=70
+EPOCHS=100
 NUM_USERS=100
 FRAC=0.1
 LOCAL_EP=5
-LOCAL_BS=16
+LOCAL_BS=128
 LR=0.001
 LORA_R=8
 LORA_ALPHA=16
 DIRICHLET_ALPHA=0.1
+AGG_METHOD=alignment
 GPU=3
+
 
 # ========== FedSDG 专用参数（根据 proposal 设计）==========
 LR_GATE=0.01           # ηm: 门控参数学习率
-LAMBDA1=0.001          # λ₁: L1 门控稀疏性惩罚
+LAMBDA1=0.01          # λ₁: L1 门控稀疏性惩罚 0.001 好像有点小 尝试一下0.01
 LAMBDA2=0.0001         # λ₂: L2 私有参数正则化
 GRAD_CLIP=1.0          # 梯度裁剪范数
+GATE_PENALTY_TYPE="unilateral"  # 门控惩罚类型: unilateral(单边,推向0) 或 bilateral(双边,推向0或1)
 # =========================================================
 
-LOG_SUBDIR="fedsdg_pretrained_vit_cifar100_E${EPOCHS}_lr${LR}_lrgate${LR_GATE}_alpha${DIRICHLET_ALPHA}"
+LOG_SUBDIR="${ALG}_${MODEL_VARIANT}_${MODEL}_${DATASET}_E${EPOCHS}_lr${LR}_lrgate${LR_GATE}_alpha${DIRICHLET_ALPHA}_bs${LOCAL_BS}_l1${LAMBDA1}_gate${GATE_PENALTY_TYPE}_${AGG_METHOD}"
 OFFLINE_DATA_ROOT="../data/preprocessed/"
 # =================================================
 
@@ -54,6 +57,7 @@ echo "FedSDG 专用参数（根据 proposal 设计）："
 echo "  - 门控学习率 (ηm): ${LR_GATE}"
 echo "  - L1 门控惩罚 (λ₁): ${LAMBDA1}"
 echo "  - L2 私有惩罚 (λ₂): ${LAMBDA2}"
+echo "  - 门控惩罚类型: ${GATE_PENALTY_TYPE}"
 echo "  - 梯度裁剪范数: ${GRAD_CLIP}"
 echo ""
 echo "FedSDG 特点："
@@ -103,6 +107,8 @@ python3 federated_main.py \
     --lr_gate ${LR_GATE} \
     --lambda1 ${LAMBDA1} \
     --lambda2 ${LAMBDA2} \
+    --gate_penalty_type ${GATE_PENALTY_TYPE} \
+    --server_agg_method ${AGG_METHOD} \
     --grad_clip ${GRAD_CLIP} \
     --gpu ${GPU} \
     --log_subdir ${LOG_SUBDIR}

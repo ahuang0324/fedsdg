@@ -134,18 +134,28 @@ class LocalUpdate(object):
                 task_loss = self.criterion(logits, labels)
                 
                 if self.args.alg == 'fedsdg':
-                    # ========== λ₁ L1 门控稀疏性惩罚 ==========
-                    # 计算: λ₁ Σ_{l=1}^L |m_{k,l}|
-                    # 其中 m_{k,l} = sigmoid(lambda_k_logit)
-                    # 目的: 鼓励门控参数接近 0 或 1，实现层级选择性个性化
+                    # ========== λ₁ 门控稀疏性惩罚 ==========
+                    # 支持两种惩罚类型（通过 --gate_penalty_type 选择）:
+                    # 
+                    # 1. unilateral (单边): |m_k|
+                    #    - 推动 m_k → 0（减少私有分支贡献）
+                    #    - 适合希望模型偏向全局的场景
+                    # 
+                    # 2. bilateral (双边): min(m_k, 1-m_k)
+                    #    - 推动 m_k → 0 或 1（分化到极端值）
+                    #    - 惩罚曲线: m_k=0.5 时最大，0 或 1 时为 0
+                    #    - 适合希望层级选择性个性化的场景
                     gate_penalty = torch.tensor(0.0, device=self.device)
                     gate_count = 0
                     for name, param in model.named_parameters():
                         if 'lambda_k_logit' in name:
-                            # m_{k,l} = sigmoid(a_{k,l})
                             m_k = torch.sigmoid(param)
-                            # L1 惩罚: |m_{k,l}|
-                            gate_penalty = gate_penalty + torch.sum(torch.abs(m_k))
+                            if self.args.gate_penalty_type == 'bilateral':
+                                # 双边惩罚: min(m_k, 1 - m_k)
+                                gate_penalty = gate_penalty + torch.sum(torch.min(m_k, 1 - m_k))
+                            else:
+                                # 单边惩罚: |m_k|
+                                gate_penalty = gate_penalty + torch.sum(torch.abs(m_k))
                             gate_count += param.numel()
                     
                     # ========== λ₂ L2 私有参数正则化 ==========
@@ -350,3 +360,164 @@ def test_inference(args, model, test_dataset):
 
     accuracy = correct/total
     return accuracy, loss
+
+
+def local_test_inference(args, model, test_dataset, idxs, private_state=None):
+    """
+    本地个性化测试推理函数（双重评估机制核心）
+    
+    用于评估客户端在其本地测试集上的个性化性能。
+    
+    兼容性处理:
+    - FedAvg: 直接使用全局模型参数进行推理
+    - FedLoRA: 直接使用全局模型（包含 LoRA 参数）进行推理
+    - FedSDG: 加载客户端私有参数后进行推理，使用完整的双路架构
+    
+    参数:
+        args: 命令行参数
+        model: 模型（全局模型或已加载私有参数的模型）
+        test_dataset: 测试数据集
+        idxs: 该客户端的本地测试集索引
+        private_state: FedSDG 专用，客户端的私有参数状态 {param_name: tensor}
+    
+    返回:
+        accuracy: 本地测试准确率
+        loss: 本地测试损失
+    """
+    model.eval()
+    loss, total, correct = 0.0, 0.0, 0.0
+    
+    use_cuda = (args.gpu is not None) and (int(args.gpu) >= 0) and torch.cuda.is_available()
+    device = 'cuda' if use_cuda else 'cpu'
+    criterion = nn.CrossEntropyLoss().to(device)
+    
+    # 创建本地测试数据加载器
+    local_test_loader = DataLoader(
+        DatasetSplit(test_dataset, idxs),
+        batch_size=128,
+        shuffle=False,
+        num_workers=2,
+        pin_memory=True
+    )
+    
+    # ==================== FedSDG: 加载客户端私有参数 ====================
+    # 对于 FedSDG，需要加载客户端特有的私有参数（lora_A_private, lora_B_private, lambda_k）
+    # 这样才能评估个性化模型的真实性能
+    original_state = None
+    if args.alg == 'fedsdg' and private_state is not None:
+        # 保存当前模型状态（用于恢复）
+        original_state = {}
+        current_state = model.state_dict()
+        
+        # 加载私有参数
+        with torch.no_grad():
+            for param_name, param_value in private_state.items():
+                if param_name in current_state:
+                    original_state[param_name] = current_state[param_name].clone()
+                    # 将私有参数移动到正确的设备
+                    model.state_dict()[param_name].copy_(param_value.to(device))
+    # ===================================================================
+    
+    with torch.no_grad():
+        for batch_idx, (images, labels) in enumerate(local_test_loader):
+            images, labels = images.to(device), labels.to(device)
+            
+            # Inference
+            outputs = model(images)
+            batch_loss = criterion(outputs, labels)
+            loss += batch_loss.item()
+            
+            # Prediction
+            _, pred_labels = torch.max(outputs, 1)
+            pred_labels = pred_labels.view(-1)
+            correct += torch.sum(torch.eq(pred_labels, labels)).item()
+            total += len(labels)
+    
+    # ==================== FedSDG: 恢复原始模型状态 ====================
+    if args.alg == 'fedsdg' and original_state is not None:
+        with torch.no_grad():
+            for param_name, param_value in original_state.items():
+                model.state_dict()[param_name].copy_(param_value)
+    # ===================================================================
+    
+    accuracy = correct / total if total > 0 else 0.0
+    return accuracy, loss
+
+
+def evaluate_local_personalization(args, global_model, test_dataset, user_groups_test, 
+                                    local_private_states=None, sample_clients=None):
+    """
+    评估所有（或抽样部分）客户端的本地个性化性能
+    
+    双重评估机制的 Step B：
+    遍历客户端，加载其对应的模型状态（Global + Personalized），
+    在各自的 dict_users_test 上测试，计算 Average_Local_Acc 和 Average_Local_Loss
+    
+    参数:
+        args: 命令行参数
+        global_model: 全局模型
+        test_dataset: 测试数据集
+        user_groups_test: {client_id: test_indices}
+        local_private_states: FedSDG 专用，{client_id: {param_name: tensor}}
+        sample_clients: 要评估的客户端列表，None 表示评估所有客户端
+    
+    返回:
+        avg_acc: 平均本地测试准确率
+        avg_loss: 平均本地测试损失
+        client_results: {client_id: (acc, loss)} 每个客户端的详细结果
+    """
+    import copy
+    
+    global_model.eval()
+    
+    # 确定要评估的客户端
+    if sample_clients is None:
+        clients_to_eval = list(user_groups_test.keys())
+    else:
+        clients_to_eval = sample_clients
+    
+    client_results = {}
+    total_acc, total_loss = 0.0, 0.0
+    
+    use_cuda = (args.gpu is not None) and (int(args.gpu) >= 0) and torch.cuda.is_available()
+    device = 'cuda' if use_cuda else 'cpu'
+    
+    for client_id in clients_to_eval:
+        test_idxs = user_groups_test[client_id]
+        
+        if len(test_idxs) == 0:
+            continue
+        
+        # ==================== 根据算法类型准备模型 ====================
+        if args.alg == 'fedsdg' and local_private_states is not None and client_id in local_private_states:
+            # FedSDG: 深拷贝全局模型并加载客户端私有参数
+            local_model = copy.deepcopy(global_model)
+            private_state = local_private_states[client_id]
+            
+            # 加载私有参数
+            with torch.no_grad():
+                current_state = local_model.state_dict()
+                for param_name, param_value in private_state.items():
+                    if param_name in current_state:
+                        current_state[param_name] = param_value.to(device)
+                local_model.load_state_dict(current_state)
+            
+            # 使用完整的双路架构进行推理（不禁用私有分支）
+            acc, loss = local_test_inference(args, local_model, test_dataset, test_idxs)
+            
+            # 释放临时模型
+            del local_model
+        else:
+            # FedAvg / FedLoRA: 直接使用全局模型
+            acc, loss = local_test_inference(args, global_model, test_dataset, test_idxs)
+        # ==============================================================
+        
+        client_results[client_id] = (acc, loss)
+        total_acc += acc
+        total_loss += loss
+    
+    num_clients = len(client_results)
+    avg_acc = total_acc / num_clients if num_clients > 0 else 0.0
+    avg_loss = total_loss / num_clients if num_clients > 0 else 0.0
+    
+    return avg_acc, avg_loss, client_results

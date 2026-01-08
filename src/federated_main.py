@@ -14,9 +14,10 @@ import torch
 from tensorboardX import SummaryWriter
 
 from options import args_parser
-from update import LocalUpdate, test_inference
+from update import LocalUpdate, test_inference, evaluate_local_personalization
 from models import MLP, CNNMnist, CNNFashion_Mnist, CNNCifar, ViT, inject_lora, get_pretrained_vit, inject_lora_timm
 from utils import get_dataset, average_weights, average_weights_lora, exp_details, get_communication_stats, print_communication_profile
+from visualize_gates import visualize_all_gates
 
 
 if __name__ == '__main__':
@@ -39,8 +40,8 @@ if __name__ == '__main__':
         torch.cuda.set_device(int(args.gpu))
     device = 'cuda' if use_cuda else 'cpu'
 
-    # load dataset and user groups
-    train_dataset, test_dataset, user_groups = get_dataset(args)
+    # load dataset and user groups (dual evaluation: train + test partitions)
+    train_dataset, test_dataset, user_groups, user_groups_test = get_dataset(args)
 
     # BUILD MODEL
     if args.model == 'cnn':
@@ -295,7 +296,11 @@ if __name__ == '__main__':
         # FedLoRA 和 FedSDG: 使用选择性聚合（仅聚合 LoRA 全局参数）
         # FedAvg: 使用全量聚合
         if args.alg in ('fedlora', 'fedsdg'):
-            global_weights = average_weights_lora(local_weights, global_model.state_dict())
+            # FedSDG 支持两种服务端聚合算法：
+            # - 'fedavg': 传统的 FedAvg 均匀加权聚合
+            # - 'alignment': 基于对齐度加权的 FedSDG 聚合算法
+            agg_method = args.server_agg_method if args.alg == 'fedsdg' else 'fedavg'
+            global_weights = average_weights_lora(local_weights, global_model.state_dict(), agg_method=agg_method)
             
             # ========== FedSDG Debug: 每5轮打印聚合后的信息 ==========
             if args.alg == 'fedsdg' and epoch % 5 == 0:
@@ -362,9 +367,32 @@ if __name__ == '__main__':
 
         # 性能优化：每 5 轮评估一次测试准确率（测试集评估耗时较长）
         if epoch % 5 == 0 or epoch == args.epochs - 1:
+            # ==================== 双重评估机制 ====================
+            # Step A: 全局模型在完整全局测试集上的性能
             test_acc, test_loss = test_inference(args, global_model, test_dataset)
             logger.add_scalar('global/test_acc', test_acc, epoch)
             logger.add_scalar('global/test_loss', test_loss, epoch)
+            
+            # Step B: 客户端本地个性化性能评估
+            # 对于 FedSDG，使用客户端私有参数；对于 FedAvg/FedLoRA，使用全局模型
+            # 使用 test_frac 控制评估客户端数量，加速评估过程
+            num_test_clients = max(1, int(args.test_frac * args.num_users))
+            test_client_idxs = np.random.choice(range(args.num_users), num_test_clients, replace=False)
+            local_avg_acc, local_avg_loss, _ = evaluate_local_personalization(
+                args=args,
+                global_model=global_model,
+                test_dataset=test_dataset,
+                user_groups_test=user_groups_test,
+                local_private_states=local_private_states,
+                sample_clients=test_client_idxs  # 按 test_frac 抽样客户端
+            )
+            logger.add_scalar('local/test_acc_avg', local_avg_acc, epoch)
+            logger.add_scalar('local/test_loss_avg', local_avg_loss, epoch)
+            
+            # 记录全局与本地性能差异（用于分析个性化效果）
+            acc_gap = local_avg_acc - test_acc
+            logger.add_scalar('local/acc_gap_vs_global', acc_gap, epoch)
+            # ======================================================
             
             # ==================== 效率指标（仅在评估轮次记录）====================
             logger.add_scalar('Efficiency/communication_savings_percent', savings_ratio_percent, epoch)
@@ -392,12 +420,26 @@ if __name__ == '__main__':
             print(f'Training Loss : {np.mean(np.array(train_loss))}')
             print('Train Accuracy: {:.2f}% \n'.format(100*train_accuracy[-1]))
 
-    # Test inference after completion of training
+    # ==================== 最终双重评估 ====================
+    # Step A: 全局测试
     test_acc, test_loss = test_inference(args, global_model, test_dataset)
+    
+    # Step B: 本地个性化测试（评估所有客户端）
+    final_local_acc, final_local_loss, final_client_results = evaluate_local_personalization(
+        args=args,
+        global_model=global_model,
+        test_dataset=test_dataset,
+        user_groups_test=user_groups_test,
+        local_private_states=local_private_states,
+        sample_clients=None  # 评估所有客户端
+    )
+    # ======================================================
 
     print(f' \n Results after {args.epochs} global rounds of training:')
     print("|---- Avg Train Accuracy: {:.2f}%".format(100*train_accuracy[-1]))
-    print("|---- Test Accuracy: {:.2f}%".format(100*test_acc))
+    print("|---- Global Test Accuracy: {:.2f}%".format(100*test_acc))
+    print("|---- Local Personalized Accuracy (Avg): {:.2f}%".format(100*final_local_acc))
+    print("|---- Acc Gap (Local - Global): {:.2f}%".format(100*(final_local_acc - test_acc)))
 
     # Saving the objects train_loss and train_accuracy:
     objects_dir = os.path.join(path_project, 'save', 'objects')
@@ -414,12 +456,17 @@ if __name__ == '__main__':
                                  format(args.dataset, args.model, args.epochs, args.frac, args.dirichlet_alpha,
                                         args.local_ep, args.local_bs))
 
-    # 保存训练结果，包含通信量统计
+    # 保存训练结果，包含通信量统计和双重评估结果
     results = {
         'train_loss': train_loss,
         'train_accuracy': train_accuracy,
         'comm_stats': comm_stats,  # 通信量统计
         'total_comm_volume_mb': cumulative_comm_volume_mb,  # 总通信量
+        'global_test_acc': test_acc,  # 全局测试准确率
+        'global_test_loss': test_loss,  # 全局测试损失
+        'local_avg_acc': final_local_acc,  # 本地个性化平均准确率
+        'local_avg_loss': final_local_loss,  # 本地个性化平均损失
+        'client_results': final_client_results,  # 每个客户端的详细结果
         'args': vars(args)  # 保存所有参数配置
     }
     
@@ -449,10 +496,18 @@ if __name__ == '__main__':
 - **参与率**: {args.frac * 100:.1f}%
 
 ## 性能指标
+### 全局模型性能
 - **最终训练准确率**: {train_accuracy[-1] * 100:.2f}%
-- **最终测试准确率**: {test_acc * 100:.2f}%
+- **全局测试准确率**: {test_acc * 100:.2f}%
 - **最终训练损失**: {train_loss[-1]:.4f}
-- **最终测试损失**: {test_loss:.4f}
+- **全局测试损失**: {test_loss:.4f}
+
+### 本地个性化性能（双重评估）
+- **本地平均测试准确率**: {final_local_acc * 100:.2f}%
+- **本地平均测试损失**: {final_local_loss:.4f}
+- **准确率差异 (Local - Global)**: {(final_local_acc - test_acc) * 100:+.2f}%
+
+### 训练时间
 - **总训练时间**: {total_time / 60:.2f} 分钟 ({total_time:.2f} 秒)
 - **平均每轮时间**: {total_time / args.epochs:.2f} 秒
 
@@ -490,10 +545,16 @@ if __name__ == '__main__':
 - **训练分类头**: {'是' if args.lora_train_mlp_head else '否'}
 """
         if args.alg == 'fedsdg':
+            # 服务端聚合算法描述
+            agg_method_desc = {
+                'fedavg': 'FedAvg 均匀加权聚合',
+                'alignment': '基于对齐度加权的 FedSDG 聚合算法'
+            }
             summary_text += f"""
 - **FedSDG 双路架构**: 全局分支 + 私有分支
 - **私有参数**: 不参与服务器聚合（仅本地更新）
 - **门控机制**: 可学习的 λ_k 参数动态平衡全局/私有权重
+- **服务端聚合算法**: {args.server_agg_method} ({agg_method_desc.get(args.server_agg_method, 'unknown')})
 """
     
     summary_text += f"""
@@ -511,6 +572,11 @@ if __name__ == '__main__':
 即每 GB 流量可换取 {efficiency_score_per_gb:.4f} 的准确率收益。
 """
     elif args.alg == 'fedsdg':
+        # 服务端聚合算法描述
+        agg_method_full_desc = {
+            'fedavg': 'FedAvg 均匀加权聚合（所有客户端权重相等）',
+            'alignment': '基于对齐度加权的聚合算法（与平均更新方向一致的客户端获得更高权重）'
+        }
         summary_text += f"""
 本次实验使用 **FedSDG** 算法，通过双路架构（全局分支 + 私有分支）对抗 Non-IID 数据分布。
 通信开销与 FedLoRA 保持一致，降低至原来的 **{100 - savings_ratio_percent:.2f}%**。
@@ -520,6 +586,7 @@ if __name__ == '__main__':
 - 私有参数（lora_A_private, lora_B_private, lambda_k）仅在客户端本地更新
 - 全局参数（lora_A, lora_B）参与服务器聚合
 - 通过门控机制自动学习全局/私有分支的最优权重
+- 服务端聚合算法: **{args.server_agg_method}** - {agg_method_full_desc.get(args.server_agg_method, 'unknown')}
 - 最终测试准确率: **{test_acc * 100:.2f}%**
 
 **投入产出比**: 每传输 1 MB 数据，获得 {efficiency_score:.6f} 的准确率提升，
@@ -573,6 +640,17 @@ if __name__ == '__main__':
         model_path = os.path.join(model_dir, '{}_{}_final.pth'.format(args.dataset, args.model))
     torch.save(global_model.state_dict(), model_path)
     print(f'Final model saved to: {model_path}')
+
+    # ==================== FedSDG: 门控系数可视化 ====================
+    if args.alg == 'fedsdg':
+        vis_dir = os.path.join(path_project, 'save', 'visualizations', args.log_subdir)
+        visualize_all_gates(
+            model=global_model,
+            local_private_states=local_private_states,
+            save_dir=vis_dir,
+            prefix=f'{args.dataset}_{args.alg}_E{args.epochs}'
+        )
+    # ===============================================================
 
     # PLOTTING (optional)
     # import matplotlib
