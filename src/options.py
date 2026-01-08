@@ -35,6 +35,22 @@ def args_parser():
                         help='LoRA scaling parameter alpha, default=16')
     parser.add_argument('--lora_train_mlp_head', type=int, default=1,
                         help='Whether to train mlp_head in FedLoRA (1=True, 0=False), default=1')
+    
+    # ==================== FedSDG 专用参数 ====================
+    # 根据 FedSDG_Design.md 中的 Equation 5 定义的正则化系数
+    # Loss = TaskLoss + λ₁ Σ|m_{k,l}| + λ₂ ||θ_{p,k}||²₂
+    parser.add_argument('--lambda1', type=float, default=1e-3,
+                        help='FedSDG: L1 门控稀疏性惩罚系数 λ₁，鼓励门控参数稀疏化 (default=1e-3)')
+    parser.add_argument('--lambda2', type=float, default=1e-4,
+                        help='FedSDG: L2 私有参数正则化系数 λ₂，限制私有参数容量 (default=1e-4)')
+    
+    # FedSDG 学习率配置（根据 proposal 设计）
+    # 三组参数使用不同学习率：ηg (共享), ηp (私有), ηm (门控)
+    parser.add_argument('--lr_gate', type=float, default=1e-2,
+                        help='FedSDG: 门控参数学习率 ηm (default=1e-2)')
+    parser.add_argument('--grad_clip', type=float, default=1.0,
+                        help='FedSDG: 梯度裁剪范数 (default=1.0, 0表示不裁剪)')
+    # =========================================================
 
     # model arguments
     parser.add_argument('--model', type=str, default='mlp', choices=['mlp', 'cnn', 'vit'], help='model name')

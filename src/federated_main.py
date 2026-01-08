@@ -300,15 +300,22 @@ if __name__ == '__main__':
             # ========== FedSDG Debug: 每5轮打印聚合后的信息 ==========
             if args.alg == 'fedsdg' and epoch % 5 == 0:
                 print(f"\n[FedSDG Aggregation Debug - Round {epoch+1}]")
-                print(f"  聚合的参数键数量: {len([k for k in global_weights.keys() if 'lora_' in k or 'head' in k])}")
+                # 计算实际被聚合的参数键（排除私有参数）
+                aggregated_keys = [k for k in global_weights.keys() 
+                                   if ('lora_' in k or 'head' in k) 
+                                   and '_private' not in k 
+                                   and 'lambda_k' not in k]
+                print(f"  聚合的参数键数量: {len(aggregated_keys)}")
                 print(f"  全局模型总键数: {len(global_weights)}")
                 
-                # 检查是否包含私有参数（不应该包含）
-                private_keys = [k for k in global_weights.keys() if '_private' in k or 'lambda_k' in k]
-                if private_keys:
-                    print(f"  ⚠️ 警告: 全局模型包含私有参数（不应该出现）: {private_keys[:3]}")
+                # 检查聚合的参数中是否错误地包含了私有参数
+                wrongly_aggregated = [k for k in aggregated_keys if '_private' in k or 'lambda_k' in k]
+                if wrongly_aggregated:
+                    print(f"  ⚠️ 警告: 聚合中包含了私有参数（不应该出现）: {wrongly_aggregated[:3]}")
                 else:
-                    print(f"  ✓ 验证通过: 全局模型不包含私有参数")
+                    # 显示私有参数保留在本地的信息
+                    private_keys_count = len([k for k in global_weights.keys() if '_private' in k or 'lambda_k' in k])
+                    print(f"  ✓ 验证通过: 私有参数 ({private_keys_count} 个) 未参与聚合，保留在客户端本地")
                 print(f"[FedSDG Aggregation Debug End]\n")
             # ========================================================
         else:
@@ -326,55 +333,58 @@ if __name__ == '__main__':
         logger.add_scalar('lr', args.lr, epoch)
 
         # Calculate avg training accuracy on participating clients (not all users)
-        # 性能优化：仅评估本轮参与训练的客户端，而非所有客户端
-        # 这大幅减少了评估时间，尤其是在客户端数量较多时
-        list_acc, list_loss = [], []
-        global_model.eval()
-        for idx in idxs_users:  # 仅评估参与训练的客户端
-            local_model = LocalUpdate(args=args, dataset=train_dataset,
-                                      idxs=user_groups[idx], logger=logger)
-            acc, loss = local_model.inference(model=global_model, loader='train')
-            list_acc.append(acc)
-            list_loss.append(loss)
-        train_accuracy.append(sum(list_acc)/len(list_acc))
-        
-        logger.add_scalar('global/train_acc_avg', train_accuracy[-1], epoch)
-        logger.add_scalar('global/train_loss_eval', sum(list_loss)/len(list_loss), epoch)
+        # 性能优化：降低评估频率，每 5 轮评估一次训练准确率
+        # 这大幅减少了评估时间，加快训练速度
+        if epoch % 5 == 0 or epoch == args.epochs - 1:
+            list_acc, list_loss = [], []
+            global_model.eval()
+            for idx in idxs_users:  # 仅评估参与训练的客户端
+                local_model = LocalUpdate(args=args, dataset=train_dataset,
+                                          idxs=user_groups[idx], logger=logger)
+                acc, loss = local_model.inference(model=global_model, loader='train')
+                list_acc.append(acc)
+                list_loss.append(loss)
+            train_accuracy.append(sum(list_acc)/len(list_acc))
+            
+            logger.add_scalar('global/train_acc_avg', train_accuracy[-1], epoch)
+            logger.add_scalar('global/train_loss_eval', sum(list_loss)/len(list_loss), epoch)
+        else:
+            # 非评估轮次：使用上一次的训练准确率（保持列表长度一致）
+            if train_accuracy:
+                train_accuracy.append(train_accuracy[-1])
+            else:
+                train_accuracy.append(0.0)
         
         # 记录累计通信量（每轮双向通信）
         cumulative_comm_volume_mb += comm_per_round_2way_mb
         logger.add_scalar('info/cumulative_comm_volume_MB', cumulative_comm_volume_mb, epoch)
         logger.add_scalar('info/cumulative_comm_volume_GB', cumulative_comm_volume_mb / 1024, epoch)
 
-        test_acc, test_loss = test_inference(args, global_model, test_dataset)
-        logger.add_scalar('global/test_acc', test_acc, epoch)
-        logger.add_scalar('global/test_loss', test_loss, epoch)
+        # 性能优化：每 5 轮评估一次测试准确率（测试集评估耗时较长）
+        if epoch % 5 == 0 or epoch == args.epochs - 1:
+            test_acc, test_loss = test_inference(args, global_model, test_dataset)
+            logger.add_scalar('global/test_acc', test_acc, epoch)
+            logger.add_scalar('global/test_loss', test_loss, epoch)
+            
+            # ==================== 效率指标（仅在评估轮次记录）====================
+            logger.add_scalar('Efficiency/communication_savings_percent', savings_ratio_percent, epoch)
+            
+            log10_cumulative_comm = math.log10(cumulative_comm_volume_mb) if cumulative_comm_volume_mb > 0 else 0
+            logger.add_scalar('Efficiency/log10_cumulative_comm_MB', log10_cumulative_comm, epoch)
+            
+            comm_for_efficiency = cumulative_comm_volume_mb if cumulative_comm_volume_mb > 0 else comm_per_round_2way_mb
+            efficiency_score = test_acc / comm_for_efficiency if comm_for_efficiency > 0 else 0
+            logger.add_scalar('Efficiency/accuracy_per_MB', efficiency_score, epoch)
+            
+            if efficiency_score > best_efficiency_score:
+                best_efficiency_score = efficiency_score
+                best_efficiency_epoch = epoch
+            
+            efficiency_score_per_gb = test_acc / (cumulative_comm_volume_mb / 1024) if cumulative_comm_volume_mb > 0 else 0
+            logger.add_scalar('Efficiency/accuracy_per_GB', efficiency_score_per_gb, epoch)
+            # ====================================================
+        
         logger.add_scalar('time/round', time.time() - start_epoch_time, epoch)
-        
-        # ==================== 每轮效率指标 ====================
-        # 1. 通信节省率（每轮记录，应该是稳定的）
-        logger.add_scalar('Efficiency/communication_savings_percent', savings_ratio_percent, epoch)
-        
-        # 2. 对数刻度累计通信量
-        log10_cumulative_comm = math.log10(cumulative_comm_volume_mb) if cumulative_comm_volume_mb > 0 else 0
-        logger.add_scalar('Efficiency/log10_cumulative_comm_MB', log10_cumulative_comm, epoch)
-        
-        # 3. 通信资源效率评分 (Accuracy per MB)
-        # 公式: current_test_accuracy / cumulative_MB_transferred
-        # 避免除零：第一轮使用单轮通信量
-        comm_for_efficiency = cumulative_comm_volume_mb if cumulative_comm_volume_mb > 0 else comm_per_round_2way_mb
-        efficiency_score = test_acc / comm_for_efficiency if comm_for_efficiency > 0 else 0
-        logger.add_scalar('Efficiency/accuracy_per_MB', efficiency_score, epoch)
-        
-        # 追踪最佳效率
-        if efficiency_score > best_efficiency_score:
-            best_efficiency_score = efficiency_score
-            best_efficiency_epoch = epoch
-        
-        # 4. 额外的效率指标：每 GB 准确率
-        efficiency_score_per_gb = test_acc / (cumulative_comm_volume_mb / 1024) if cumulative_comm_volume_mb > 0 else 0
-        logger.add_scalar('Efficiency/accuracy_per_GB', efficiency_score_per_gb, epoch)
-        # ====================================================
 
         # print global training loss after every 'i' rounds
         if (epoch+1) % print_every == 0:

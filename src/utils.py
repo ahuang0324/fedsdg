@@ -277,7 +277,11 @@ def average_weights_lora(w, global_state_dict):
     # 2. 仅对 LoRA 相关参数进行 FedAvg 聚合
     # 识别所有需要聚合的 LoRA 参数键
     # 注意：需要同时匹配 'mlp_head'（手写 ViT）和 'head'（timm ViT）
-    lora_keys = [key for key in w[0].keys() if 'lora_' in key or 'mlp_head' in key or 'head' in key]
+    # FedSDG: 排除私有参数（_private）和门控参数（lambda_k）
+    lora_keys = [key for key in w[0].keys() 
+                 if ('lora_' in key or 'mlp_head' in key or 'head' in key) 
+                 and '_private' not in key 
+                 and 'lambda_k' not in key]
     
     if len(lora_keys) == 0:
         print("  [WARNING] 未找到任何 LoRA 参数，请检查模型是否正确注入 LoRA")
@@ -365,8 +369,13 @@ def get_communication_stats(model, alg):
     elif alg in ('fedlora', 'fedsdg'):
         # FedLoRA 和 FedSDG: 仅通信全局 LoRA 参数（不包括私有参数）
         # FedSDG 的私有参数（_private 和 lambda_k）不参与通信
-        # 因此通信量与 FedLoRA 完全相同
-        comm_params = trainable_params
+        # 需要精确计算：排除私有参数和门控参数
+        comm_params = 0
+        for name, p in model.named_parameters():
+            if p.requires_grad:
+                # 排除私有参数和门控参数
+                if '_private' not in name and 'lambda_k' not in name:
+                    comm_params += p.numel()
     else:
         comm_params = total_params
     

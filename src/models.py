@@ -62,19 +62,50 @@ class LoRALayer(nn.Module):
         
         # ========== FedSDG 专用：私有分支（Private Path）==========
         if self.is_fedsdg:
+            # ==================== 私有参数初始化策略 ====================
+            # 
+            # 设计原则:
+            # 1. 私有分支需要能够接收梯度，让门控参数 lambda_k 能够学习
+            # 2. 初始时私有分支贡献应该较小，但不能为零
+            # 
+            # 关键问题：如果 B_private = 0，则：
+            # - private_output = x @ A_private @ B_private = 0
+            # - ∂Loss/∂lambda_k = ∂Loss/∂output * private_output = 0
+            # - 门控参数永远不会更新！
+            # 
+            # 解决方案：给 B_private 一个小的非零初始化
+            # - A_private: 正态分布 N(0, 1/sqrt(r))
+            # - B_private: 小的正态分布 N(0, 0.01)
+            # 
+            # 这确保:
+            # - 初始时 private_output 很小但非零
+            # - 门控参数可以从一开始就接收梯度
+            # - 私有分支可以正常学习
+            # ==========================================================
+            
             # 私有低秩矩阵（不参与服务器聚合）
             self.lora_A_private = nn.Parameter(torch.zeros(in_features, r))
             self.lora_B_private = nn.Parameter(torch.zeros(r, out_features))
             
-            # 初始化私有分支（与全局分支相同的初始化策略）
+            # 初始化 A_private：使用正态分布
             nn.init.normal_(self.lora_A_private, mean=0.0, std=1.0/r**0.5)
-            # lora_B_private 保持为 0
+            # 初始化 B_private：使用小的正态分布，确保门控参数能接收梯度
+            nn.init.normal_(self.lora_B_private, mean=0.0, std=0.01)
             
-            # 门控参数 lambda_k：控制全局/私有分支的权重
-            # 初始化为 -2.0（sigmoid(-2.0) ≈ 0.12，即 88% 全局 + 12% 私有）
-            # 这确保模型初始阶段主要依赖预训练的全局知识
+            # ==================== 门控参数初始化 (FedSDG_Design.md 规范) ====================
+            # 门控参数 lambda_k_logit (a_{k,l})：控制全局/私有分支的权重
+            # 
+            # 根据设计文档 Equation 3: m_{k,l} = σ(a_{k,l})
+            # 初始化策略: a_{k,l} = 0 → m_{k,l} = σ(0) = 0.5
+            # 
+            # 含义:
+            # - 训练开始时，共享和私有组件等权重（各占 50%）
+            # - 提供无偏向的起点
+            # - 让优化过程自然地学习个性化程度
+            # 
             # 使用 sigmoid 激活确保 lambda_k ∈ [0, 1]
-            self.lambda_k_logit = nn.Parameter(torch.tensor([-2.0]))
+            # ==========================================================================
+            self.lambda_k_logit = nn.Parameter(torch.tensor([0.0]))
         
         # 保存 in_features 和 out_features 供外部访问
         self.in_features = in_features
@@ -91,22 +122,47 @@ class LoRALayer(nn.Module):
         return self.original_layer.bias
         
     def forward(self, x):
+        """
+        前向传播
+        
+        FedSDG 模式实现 Equation 4 (FedSDG_Design.md):
+        θ̃_{k,l} = θ_{g,l} + m_{k,l} · θ_{p,k,l}
+        
+        这是**加性残差形式**，将个性化建模为共享结构的残差扰动：
+        - θ_{g,l}: 共享适应参数（全局 LoRA）
+        - θ_{p,k,l}: 客户端特定适应参数（私有 LoRA）
+        - m_{k,l}: 门控权重，调节偏差幅度
+        
+        极端情况：
+        - m_{k,l} = 0: 仅使用共享适应（完全全局）
+        - m_{k,l} = 1: 共享 + 完整私有残差（完全个性化）
+        - 0 < m_{k,l} < 1: 从共享模型部分偏离（混合模式）
+        """
         # 原始输出: Wx (+ b)
         original_output = self.original_layer(x)
         
         if self.is_fedsdg:
-            # ========== FedSDG 模式：双路加权计算 ==========
-            # 计算门控参数 lambda_k ∈ [0, 1]
-            lambda_k = torch.sigmoid(self.lambda_k_logit)
+            # ==================== FedSDG 模式：残差分解适应 (Equation 4) ====================
+            # 计算门控参数 m_{k,l} = σ(a_{k,l}) ∈ [0, 1]
+            m_k = torch.sigmoid(self.lambda_k_logit)
             
-            # 全局分支输出
+            # 全局分支输出: x @ θ_{g,l}
             global_output = x @ self.lora_A @ self.lora_B
             
-            # 私有分支输出
+            # 私有分支输出: x @ θ_{p,k,l}
             private_output = x @ self.lora_A_private @ self.lora_B_private
             
-            # 加权组合：(1 - lambda_k) * global + lambda_k * private
-            lora_output = (global_output * (1 - lambda_k) + private_output * lambda_k) * self.scaling
+            # ========== Equation 4: θ̃_{k,l} = θ_{g,l} + m_{k,l} · θ_{p,k,l} ==========
+            # 有效 LoRA 输出 = 全局输出 + 门控权重 * 私有输出
+            # 这是加性残差形式，而非加权插值
+            # 
+            # 含义：
+            # - 全局分支始终贡献（基础适应）
+            # - 私有分支作为残差扰动，由门控调节幅度
+            # - m_k=0 时，仅使用全局分支
+            # - m_k=1 时，全局 + 完整私有残差
+            lora_output = (global_output + m_k * private_output) * self.scaling
+            # =========================================================================
         else:
             # ========== 标准 LoRA 模式：单路计算 ==========
             # LoRA 输出: (alpha/r) * x @ A @ B

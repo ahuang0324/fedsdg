@@ -3,50 +3,83 @@
 # 使用预训练 ViT 模型进行全量参数联邦学习（对比 FedLoRA）
 # 关键优化：使用离线预处理数据，消除实时 Resize，降低 CPU 负载
 
-# 关键配置说明：
-# --alg fedavg: 使用 FedAvg 算法（全量参数训练）
-# --model_variant pretrained: 使用预训练模型
-# --dataset cifar100: 使用 CIFAR-100 数据集（100个类别）
-# --image_size 224: 预训练模型需要 224x224 输入
-# --use_offline_data: 使用离线预处理数据（关键优化！）
-# --offline_data_root: CIFAR-100 预处理数据路径
-# --lr 0.0001: 预训练模型微调通常需要更小的学习率
-
-# 注意：使用此脚本前，请先运行预处理脚本：
-#   python3 preprocess_cifar100.py
+# ==================== 参数配置 ====================
+ALG="fedavg"
+MODEL="vit"
+MODEL_VARIANT="pretrained"
+DATASET="cifar100"
+NUM_CLASSES=100
+IMAGE_SIZE=224
+EPOCHS=70
+NUM_USERS=100
+FRAC=0.1
+LOCAL_EP=5
+LOCAL_BS=32
+LR=0.0003
+OPTIMIZER="adam"
+DIRICHLET_ALPHA=0.5
+GPU=2
+LOG_SUBDIR="fedavg_pretrained_vit_cifar100_E${EPOCHS}_lr${LR}_offline_alpha${DIRICHLET_ALPHA}"
+OFFLINE_DATA_ROOT="../data/preprocessed/"
+# =================================================
 
 export HF_ENDPOINT=https://hf-mirror.com
 
-python3 federated_main.py \
-    --alg fedavg \
-    --model vit \
-    --model_variant pretrained \
-    --dataset cifar100 \
-    --image_size 224 \
-    --use_offline_data \
-    --offline_data_root ../data/preprocessed/ \
-    --epochs 50 \
-    --num_users 100 \
-    --frac 0.1 \
-    --local_ep 5 \
-    --local_bs 32 \
-    --lr 0.0001 \
-    --optimizer adam \
-    --dirichlet_alpha 0.5 \
-    --gpu 1 \
-    --log_subdir fedavg_pretrained_vit_cifar100_E50_lr0.0001_offline_alpha0.5
+echo "=========================================="
+echo "FedAvg 训练 - CIFAR-100 (预训练 + 离线数据)"
+echo "=========================================="
+echo ""
+echo "训练配置："
+echo "  - 算法: ${ALG} (全量参数训练)"
+echo "  - 模型: ViT-Tiny (timm 预训练，ImageNet-21k)"
+echo "  - 数据集: ${DATASET} (离线预处理 ${IMAGE_SIZE}x${IMAGE_SIZE})"
+echo "  - 训练轮次: ${EPOCHS}"
+echo "  - 客户端数量: ${NUM_USERS}"
+echo "  - 参与率: $(echo "scale=0; ${FRAC} * 100" | bc)%"
+echo "  - 本地 Epoch: ${LOCAL_EP}"
+echo "  - 本地 Batch Size: ${LOCAL_BS}"
+echo "  - 学习率: ${LR}"
+echo "  - 优化器: ${OPTIMIZER}"
+echo "  - Dirichlet Alpha: ${DIRICHLET_ALPHA}"
+echo "  - GPU: ${GPU}"
+echo ""
+echo "=========================================="
+echo ""
 
-# 预期效果：
-# - CIFAR-100 更具挑战性（100个类别 vs CIFAR-10的10个类别）
-# - 训练所有参数（5.7M），而非仅 LoRA 参数（~200K）
-# - 通信开销更大（传输完整模型参数）
-# - 准确率预期：60-75%（CIFAR-100 比 CIFAR-10 更难）
-# - CPU 占用率降低 80% 以上（相比实时 Resize）
-# - GPU 利用率显著提升（数据加载不再是瓶颈）
-# - 每轮时间大幅缩短（~30-50秒，相比原来的 150-180秒）
-#
-# 对比目的：
-# - 验证离线预处理的性能提升
-# - 对比 FedLoRA vs FedAvg 在 CIFAR-100 上的准确率差异
-# - 对比通信开销（200K vs 5.7M 参数）
-# - 评估更复杂数据集上的联邦学习性能
+python3 federated_main.py \
+    --alg ${ALG} \
+    --model ${MODEL} \
+    --model_variant ${MODEL_VARIANT} \
+    --dataset ${DATASET} \
+    --image_size ${IMAGE_SIZE} \
+    --use_offline_data \
+    --offline_data_root ${OFFLINE_DATA_ROOT} \
+    --epochs ${EPOCHS} \
+    --num_users ${NUM_USERS} \
+    --frac ${FRAC} \
+    --local_ep ${LOCAL_EP} \
+    --local_bs ${LOCAL_BS} \
+    --lr ${LR} \
+    --optimizer ${OPTIMIZER} \
+    --dirichlet_alpha ${DIRICHLET_ALPHA} \
+    --gpu ${GPU} \
+    --log_subdir ${LOG_SUBDIR}
+
+echo ""
+echo "=========================================="
+echo "训练完成！"
+echo "=========================================="
+echo ""
+echo "结果文件位置："
+echo "  - TensorBoard 日志: ../logs/${LOG_SUBDIR}/"
+echo "  - 实验总结: ../save/summaries/${DATASET}_${MODEL}_${ALG}_E${EPOCHS}_summary.txt"
+echo "  - 最终模型: ../save/models/${DATASET}_${MODEL}_final.pth"
+echo ""
+echo "查看 TensorBoard："
+echo "  tensorboard --logdir=../logs/${LOG_SUBDIR}"
+echo ""
+echo "FedAvg 特点："
+echo "  - 训练所有参数（~5.7M）"
+echo "  - 通信开销较大（传输完整模型）"
+echo "  - 作为 FedLoRA/FedSDG 的对比基准"
+echo ""
