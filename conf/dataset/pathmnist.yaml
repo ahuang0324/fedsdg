@@ -1,0 +1,38 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# PathMNIST 数据集配置 (MedMNIST v2, 支持多种尺寸)
+# =============================================================================
+#
+# PathMNIST 数据集特点:
+#   - 9 类结直肠病理组织分类
+#   - 支持两种尺寸: 28x28 (MNIST-like) 或 224x224 (标准)
+#   - train: 89,996 + val: 10,004 (合并为训练集) + test: 7,180
+#   - 3 通道 RGB 图像
+#
+# 使用方式:
+#   # 224x224 版本 (默认，使用 mmap)
+#   python main.py dataset=pathmnist
+#
+#   # 28x28 版本 (标准加载，resize 到 224x224)
+#   python main.py dataset=pathmnist +dataset.pathmnist_size=28
+#
+# 依赖:
+#   pip install medmnist
+#
+# =============================================================================
+
+name: pathmnist
+num_classes: 9
+num_channels: 3
+image_size: 224                # 最终目标尺寸 (28x28 会 resize 到此尺寸)
+default_image_size: 224        # 使用 224x224 原始版本，与 configs/datasets.yaml 保持一致
+
+# PathMNIST 原始尺寸选择
+# 224: 使用 224x224 原始版本 (需要 mmap，内存效率高)
+# 28: 使用 28x28 版本 (标准加载，兼容性好，会 resize 到 224x224)
+pathmnist_size: 224
+
+# 离线数据配置 (不支持)
+use_offline: false
+offline_data_root: ./datasets/preprocessed

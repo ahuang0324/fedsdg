@@ -1,0 +1,71 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# LoRA-FAIR 算法配置
+#
+# 论文: "LoRA-FAIR: Federated LoRA Fine-Tuning with Aggregation and
+#        Initialization Refinement" (Bian et al., ICCV 2025)
+#
+# 核心思想:
+#   - 标准单路 LoRA 训练（与 FedLoRA 完全相同的客户端训练逻辑）
+#   - 服务端聚合后引入残差修正项 ΔB：
+#     * 计算理想全局更新 ΔW = (1/M) Σ A_k @ B_k
+#     * 优化 ΔB 使 Ā@(B̄+ΔB) ≈ ΔW
+#     * 闭式解: ΔB = (Ā^T Ā + μI)^{-1} Ā^T (ΔW - Ā@B̄)
+#   - 客户端接收修正后的参数 B'=B̄+ΔB 和 Ā 作为下一轮初始化
+#   - 无额外客户端通信或计算开销
+#
+# 使用方式:
+#   python main.py algorithm=lorafair
+#   python main.py algorithm=lorafair algorithm.residual_mu=0.1
+#   python main.py algorithm=lorafair algorithm.server_agg_method=alignment
+#
+# =============================================================================
+
+name: lorafair
+
+# =============================================================================
+# LoRA 参数（标准单路 LoRA，A 和 B 都参与训练和聚合）
+# =============================================================================
+
+lora_r: 8                      # LoRA 秩 (4-16 典型值)
+lora_alpha: 16                 # LoRA 缩放因子 (通常为 2*r)
+lora_train_mlp_head: true      # 训练分类头
+
+# =============================================================================
+# LoRA-FAIR 特有参数 —— 服务端残差修正
+# =============================================================================
+
+residual_mu: 0.1               # 残差修正正则化系数 μ
+                               # 控制 ΔB 的幅度：μ 越大，ΔB 越保守
+                               # 论文推荐范围: 0.01 ~ 1.0
+
+# =============================================================================
+# 服务端聚合配置
+# =============================================================================
+
+server_agg_method: fedavg      # 基础聚合方法: fedavg (默认) | alignment
+                               # LoRA-FAIR 在基础聚合之上叠加残差修正
+
+# 对齐度计算策略（仅当 server_agg_method=alignment）
+alignment_strategy: loo_mean
+weight_transform: softmax
+softmax_temperature: 0.3
+lambda_smooth: 0.0
+
+# =============================================================================
+# 其他参数（保持与 FedLoRA 结构一致）
+# =============================================================================
+
+# FedSDG 专用参数（LoRA-FAIR 中忽略）
+lambda1: 0.0
+lambda2: 0.0
+gate_penalty_type: unilateral
+lr_gate: 0.01
+grad_clip: 0.0
+
+# 优化器配置
+optimizer: adam
+
+# Head 学习率
+lr_head: null                  # 使用全局 lr

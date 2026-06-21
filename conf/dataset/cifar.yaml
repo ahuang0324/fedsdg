@@ -1,0 +1,14 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# CIFAR-10 数据集配置
+# =============================================================================
+
+name: cifar
+num_classes: 10
+num_channels: 3
+image_size: 224                # 预训练 ViT 使用 224，从零训练可用 32
+
+# 离线数据配置
+use_offline: false
+offline_data_root: ./datasets/preprocessed

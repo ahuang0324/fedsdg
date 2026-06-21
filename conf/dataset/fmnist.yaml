@@ -1,0 +1,14 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# Fashion-MNIST 数据集配置
+# =============================================================================
+
+name: fmnist
+num_classes: 10
+num_channels: 1
+image_size: 224                # 预训练 ViT 使用 224，原始图像 28×28 会自动 Resize
+
+# 离线数据配置
+use_offline: false
+offline_data_root: ./datasets/preprocessed

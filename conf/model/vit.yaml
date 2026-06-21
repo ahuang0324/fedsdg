@@ -1,0 +1,26 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# ViT (Vision Transformer) 模型配置
+# =============================================================================
+# 
+# ViT 支持两种模式:
+# - pretrained: 使用 timm 预训练权重 (ImageNet-21k)，推荐用于 FedLoRA/FedSDG
+# - scratch: 从零训练，适合小数据集实验
+#
+# 使用方式:
+#   python main.py model=vit                           # 默认预训练
+#   python main.py model=vit model.variant=scratch     # 从零训练
+#
+# =============================================================================
+
+name: vit
+variant: pretrained            # pretrained | scratch
+vit_type: tiny                 # tiny | base (vit_tiny_patch16_224 或 vit_base_patch16_224)
+
+# 以下参数在 ViT 中不使用，保留以保持结构一致
+num_filters: 32
+kernel_num: 9
+kernel_sizes: "3,4,5"
+norm: batch_norm
+max_pool: true

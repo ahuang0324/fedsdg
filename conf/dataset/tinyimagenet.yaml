@@ -1,0 +1,26 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# Tiny-ImageNet 数据集配置
+# =============================================================================
+# 
+# Tiny-ImageNet 数据集特点:
+#   - 200 个类别 (ImageNet 子集)
+#   - 每类 500 张训练图像, 50 张验证图像
+#   - 原生图像大小: 64×64
+#   - 总计: 100,000 训练 + 10,000 验证
+#
+# 使用方式:
+#   python main.py dataset=tinyimagenet
+#   python main.py dataset=tinyimagenet dataset.image_size=64  # 使用原生尺寸
+#
+# =============================================================================
+
+name: tinyimagenet
+num_classes: 200
+num_channels: 3
+image_size: 224                # ViT 需要 resize 到 224 (原生 64x64)
+
+# 离线数据配置 (不支持)
+use_offline: false
+offline_data_root: ./datasets/preprocessed

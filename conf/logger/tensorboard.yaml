@@ -1,0 +1,8 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# TensorBoard 日志后端（默认）
+# @package _global_
+logging:
+  backend: tensorboard  # backend 是指日志记录系统的后端类型
+  log_every_n_rounds: 1
+  save_config: true

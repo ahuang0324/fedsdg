@@ -1,0 +1,97 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# FedDPA - Federated Dual-Path Adapter 算法配置
+# =============================================================================
+#
+# FedDPA 是 Baseline 方法，用于与 FedSDG 进行对比，特点:
+# - 双路 LoRA 架构: Global 分支 (聚合) + Private 分支 (本地持久化)
+# - 训练时固定混合比例 λ
+# - 推理时 Instance-wise Dynamic Weighting
+#
+# 前向传播公式:
+#   训练: output = Wx + scaling * [(1-λ) * global + λ * private]
+#   推理: output = Wx + scaling * [(1-α_t) * global + α_t * private]
+#         其中 α_t = inference_scale_factor * mean(cosine_sim(test, anchors))
+#
+# 与 FedSDG 的关键区别:
+# - FedSDG: global + m_k * private (加性残差，可学习门控)
+# - FedDPA: (1-λ) * global + λ * private (加权插值，固定/动态权重)
+#
+# 使用方式:
+#   python main.py algorithm=feddpa
+#   python main.py algorithm=feddpa algorithm.train_mix_ratio=0.3
+#   python main.py algorithm=feddpa algorithm.server_agg_method=alignment
+#
+# =============================================================================
+
+name: feddpa
+
+# LoRA 核心参数（与 FedSDG 保持一致）
+lora_r: 8                      # LoRA 秩
+lora_alpha: 16                 # LoRA 缩放因子
+lora_train_mlp_head: true      # 训练分类头
+
+# =============================================================================
+# FedDPA 特有参数
+# =============================================================================
+
+# 训练时混合比例 λ（固定值）
+# - 0.5: CIFAR/DomainNet-Mix 推荐（论文设定）
+# - 0.3: 其他数据集
+train_mix_ratio: 0.5
+
+# 推理时缩放因子（通常等于 train_mix_ratio）
+# 分离配置便于消融实验:
+# - 设为 0.0: 仅使用 Global（测试全局性能）
+# - 设为 1.0: 最大化 Private 贡献（测试个性化性能）
+inference_scale_factor: 0.5
+
+# Anchor 采样配置（推理时使用）
+anchor_count: 5                # Anchor 样本数量（论文设定）
+
+# =============================================================================
+# 服务端聚合配置
+# =============================================================================
+
+# 聚合方法（FedDPA 支持 fedavg 和 alignment）
+server_agg_method: fedavg      # fedavg | alignment
+
+# 对齐度计算策略（仅当 server_agg_method=alignment）
+alignment_strategy: loo_mean   # loo_mean | standard_mean
+weight_transform: softmax      # relu_normalize | softmax
+softmax_temperature: 0.05
+lambda_smooth: 0.0
+
+# =============================================================================
+# 优化器配置
+# =============================================================================
+
+# FedDPA 使用 Adam 优化器
+optimizer: adam
+
+# 梯度裁剪（稳定训练）
+grad_clip: 1.0                 # 最大梯度范数 (0 禁用)
+
+# Head 参数模式
+# - global: Head 参与聚合（默认，与 FedLoRA 行为一致）
+# - private: Head 不参与聚合，每个客户端本地维护（个性化分类头）
+head_mode: global
+
+# 学习率配置（支持不同参数组使用不同学习率）
+# - lr: 主学习率（Global LoRA + Private LoRA）
+# - lr_head: Head学习率（如果未设置，使用主学习率）
+# - lr_private: Private参数学习率（如果未设置，使用主学习率）
+lr_head: null                  # Head学习率，null表示使用主学习率
+lr_private: null               # Private参数学习率，null表示使用主学习率
+
+# =============================================================================
+# Dynamic Alignment 配置（实验性）
+# =============================================================================
+# DA 将私有分支输出对齐到全局分支量级空间，
+# 使 λ 成为纯粹的"私有信号相对于全局信号的混合比例"。
+# 与 FedSDG DA 实现一致（不含 DA-Scale）。
+use_dynamic_alignment: false   # 默认关闭，通过参数开启
+da_floor_gamma: 0.1            # Relative Floor 系数
+da_target_mode: global         # global(推荐) | floor | base | geomean
+da_detach_private_rms: true    # 是否 detach private RMS

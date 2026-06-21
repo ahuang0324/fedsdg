@@ -1,0 +1,15 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# CNN 模型配置
+# =============================================================================
+
+name: cnn
+variant: scratch               # CNN 只支持从零训练
+
+# CNN 参数
+num_filters: 32
+kernel_num: 9
+kernel_sizes: "3,4,5"
+norm: batch_norm
+max_pool: true

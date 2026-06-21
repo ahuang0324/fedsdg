@@ -1,0 +1,160 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# FedSDG - 联邦结构解耦门控算法配置
+# =============================================================================
+# 
+# FedSDG 是核心研究方法，特点:
+# - 双路 LoRA 架构: 全局分支 (聚合) + 私有分支 (本地)
+# - 可学习门控机制 (λ_k): 自动平衡全局/私有贡献
+# - 基于对齐度的服务器聚合，改善收敛性
+#
+# 损失函数: L = L_task + λ₁·Σ|m_k| + λ₂·||θ_private||²
+#
+# 使用方式:
+#   python main.py algorithm=fedsdg
+#   python main.py algorithm=fedsdg algorithm.lambda1=0.001 algorithm.lambda2=0.0001
+#   python main.py algorithm=fedsdg algorithm.server_agg_method=alignment
+#
+# =============================================================================
+
+name: fedsdg
+
+# LoRA 核心参数 (双路架构)
+lora_r: 8                      # Shared LoRA 秩
+lora_alpha: 16                 # LoRA 缩放因子
+lora_r_private: null            # Private LoRA 秩（null = 等于 lora_r，用于消融实验可设不同值）
+lora_train_mlp_head: true      # 训练分类头
+
+# =============================================================================
+# 门控粒度配置 ()
+# =============================================================================
+# 控制门控参数的粒度：
+# - fine: 每层独立门控参数 (24个参数，当前实现)
+# - coarse: 全局共享门控参数 (1个参数，消融实验)
+gate_granularity: fine         # fine | coarse
+
+# =============================================================================
+# 服务端聚合配置
+# =============================================================================
+
+# 聚合方法
+server_agg_method: fedavg   # alignment (推荐) | fedavg
+
+# 对齐度计算策略（仅当 server_agg_method=alignment）
+alignment_strategy: loo_mean # loo_mean (推荐) | standard_mean
+                               # - loo_mean: Leave-One-Out 平均（消除自相关偏差）
+                               # - standard_mean: 标准平均（原始实现）
+
+# 权重转换方式（仅当 server_agg_method=alignment）
+weight_transform: softmax  # relu_normalize | softmax
+                                  # - relu_normalize: ReLU + 线性归一化（默认）
+                                  # - softmax: 保留负值影响，温度可调
+
+# Softmax 温度（仅当 weight_transform=softmax）
+# 较小的温度使权重分布更集中，较大的温度使权重分布更均匀
+softmax_temperature: 0.05
+
+# 权重平滑系数：weights = (1-λ)*weights + λ*(1/M)
+# 0 = 不平滑（默认），>0 = 插值到均匀分布（增加鲁棒性）
+lambda_smooth: 0.0
+
+# 正则化系数
+# Loss = L_task + λ₁·gate_penalty + λ₂·private_penalty
+lambda1: 0.01                  # 门控稀疏惩罚 (L1 on m_k)
+lambda2: 0.001                 # 私有参数正则化 (L2 on θ_private)
+
+# 门控惩罚类型
+# - unilateral: 将 m_k 推向 0 (鼓励全局主导)
+# - bilateral: 将 m_k 推向 0 或 1 (鼓励二元选择)
+gate_penalty_type: unilateral
+
+# 门控参数学习率 (独立于主学习率)
+lr_gate: 0.1
+
+# 梯度裁剪 (稳定训练)
+grad_clip: 1.0                 # 最大梯度范数 (0 禁用)
+
+# 优化器配置 (覆盖 training.optimizer)
+# FedSDG 必须使用 Adam，因为需要为三组参数设置不同学习率
+optimizer: adam                # 强制使用 Adam (全局/私有/门控 分组优化)
+
+# =============================================================================
+# 固定门控配置（用于对比实验）
+# =============================================================================
+
+# 是否固定门控系数（不学习）
+# - false: 可学习模式（默认），门控参数通过反向传播自动学习
+# - true: 固定模式，门控参数使用 fixed_gate_value 设置的固定值
+fix_gate: false
+
+# 固定门控值（仅在 fix_gate=true 时生效）
+# 范围: [0.0, 1.0]
+# - 0.0: 完全使用全局分支（禁用私有分支）
+# - 0.5: 全局和私有分支等权重（默认）
+# - 1.0: 完全使用私有分支（最大化个性化）
+fixed_gate_value: 0.5
+
+# 可学习门控初始化值（仅在 fix_gate=false 时生效）
+# 门控参数 lambda_k_logit 的初始值（logit形式）
+# - 0.0: m_k = sigmoid(0.0) = 0.5（默认，等权重起点）
+# - 负值: m_k < 0.5（偏向全局分支，如 -1.0 → m_k ≈ 0.27）
+# - 正值: m_k > 0.5（偏向私有分支，如 1.0 → m_k ≈ 0.73）
+gate_init_value: -2.0
+
+# 门控 Warmup 轮数
+# 前 N 轮不施加门控惩罚(λ₁=0)，让门控参数自由学习
+# 特别适用于 DA 模式，防止门控在训练初期被过早压制
+# - 0: 不使用 warmup（默认）
+# - 5~10: 推荐值，DA 模式下可适当增大
+gate_warmup_rounds: 0
+
+# =============================================================================
+# Head 参数模式配置
+# =============================================================================
+
+# Head 参数模式
+# - global: Head 参与服务端聚合（默认，与原 FedSDG 一致）
+# - private: Head 不参与聚合，每个客户端本地维护（类似 FedRep）
+head_mode: global
+
+# Head 学习率（仅在 head_mode=private 时建议调整）
+# - null: 使用主学习率 lr（默认）
+# - 正数: 使用独立的 Head 学习率
+lr_head: null
+
+# =============================================================================
+# Dynamic Alignment 配置
+# =============================================================================
+
+# 是否启用 Dynamic Alignment 模式
+# - false: 原始 FedSDG 模式（默认）
+# - true: DA 模式，m_k 语义变为"相对于全局分支的私有信号混合比例"
+use_dynamic_alignment: false
+
+# Relative Floor 系数 γ（仅在 da_target_mode=floor 时生效）
+# target_rms = max(RMS_global, γ × RMS_base_output)
+# - 0.1: 私有分支至少保持主干输出 10% 的幅度（默认）
+# - 可调范围: [0.01, 1.0]
+da_floor_gamma: 0.1
+
+# target_rms 计算模式（仅在 use_dynamic_alignment=true 时生效）
+# - floor: 原始模式，target = max(g_rms, γ × base_rms)（默认）
+# - base: 始终以 backbone 输出为参考，target = base_rms，完全消除 γ 依赖
+# - geomean: 几何均值锚定，target = sqrt(g_rms * base_rms)，无超参数
+da_target_mode: floor
+
+# DA Scale：全局可学习放大系数（仅在 use_dynamic_alignment=true 时生效）
+# - false: 无放大系数，α=1.0（默认，原始 DA 行为）
+# - true: 全局共享的可学习标量 α = exp(s)，自动适应数据集异构特性
+#   α > 1: 放大私有信号（高异构场景，如 OfficeHome）
+#   α ≈ 1: 保持原始 DA 行为（中等异构场景）
+#   α < 1: 衰减私有信号（低异构场景）
+#   参与全局聚合，收敛到数据集级别最优值
+use_da_scale: false
+
+# DA Scale 学习率（仅在 use_da_scale=true 时生效）
+# 全局参数，exp 参数化 + logit clamp [-2, 3] 安全网 → α ∈ [0.135, 20.09]
+# - 0.01: 默认值（全局参数梯度是24层累加，需较小lr确保稳定收敛）
+# - 可调范围: [0.005, 0.05]
+lr_da_scale: 0.01

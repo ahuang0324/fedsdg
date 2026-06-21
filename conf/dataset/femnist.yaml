@@ -1,0 +1,14 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# FEMNIST 数据集配置
+# =============================================================================
+
+name: femnist
+num_classes: 62
+num_channels: 1  # 原始是灰度，会自动转换为3通道用于ViT
+image_size: 224  # ViT 预训练模型使用 224
+
+# 离线数据配置
+use_offline: false
+offline_data_root: ./datasets/preprocessed

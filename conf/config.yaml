@@ -1,0 +1,115 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# Hydra 主配置入口
+# =============================================================================
+# 
+# 使用方式:
+#   python main.py                                    # 使用默认配置
+#   python main.py algorithm=fedsdg                   # 切换算法
+#   python main.py algorithm=fedsdg dataset=cifar100  # 组合配置
+#   python main.py training.epochs=50                 # 覆盖单个参数
+#   python main.py --cfg job                          # 打印完整配置
+#
+# 输出目录结构:
+#   outputs/YYYY-MM-DD/HH-MM-SS/     # 一次完整实验
+#   ├── .hydra/                      # Hydra 配置快照
+#   ├── main.log                     # 运行日志
+#   ├── tensorboard/                 # TensorBoard 日志
+#   ├── results.pkl                  # 结果文件
+#   └── summary.txt                  # 摘要报告
+#
+# =============================================================================
+
+# 默认配置组选择
+defaults:
+  - algorithm: fedavg          # 默认使用 FedAvg
+  - dataset: cifar100          # 默认使用 CIFAR-100
+  - model: vit                 # 默认使用 ViT
+  - training: default          # 默认训练配置
+  - logger: tensorboard        # 默认使用 TensorBoard (可选: wandb, none)
+  - _self_                     # 允许本文件覆盖默认值
+
+# =============================================================================
+# Hydra 运行时配置
+# =============================================================================
+hydra:
+  run:
+    # 输出目录: outputs/YYYY-MM-DD/HHMMSS_算法_E轮次_数据集_alpha划分_seed种子_备注/
+    # 注意: experiment_note 应该在脚本中预处理，确保以 _ 开头（如果非空）
+    dir: ${oc.env:PROJECT_ROOT,outputs}/${now:%Y-%m-%d}/${now:%H%M%S}_${algorithm.name}_E${training.epochs}_${dataset.name}_a${federated.dirichlet_alpha}_seed${system.seed}${training.experiment_note}
+  
+  sweep:
+    # multirun 模式的目录格式
+    dir: ${oc.env:PROJECT_ROOT,outputs}/multirun/${now:%Y-%m-%d}/${now:%H%M%S}_${algorithm.name}_E${training.epochs}_${dataset.name}_a${federated.dirichlet_alpha}${training.experiment_note}
+    subdir: seed${system.seed}
+  
+  job:
+    # 启用 chdir，切换到输出目录运行
+    chdir: true
+  
+  # 日志配置
+  job_logging:
+    root:
+      level: INFO
+      handlers:
+        - console
+        - file
+    
+    handlers:
+      console:
+        class: logging.StreamHandler
+        formatter: simple
+        stream: ext://sys.stdout
+      
+      file:
+        class: logging.FileHandler
+        formatter: simple
+        filename: main.log
+        mode: a
+    
+    formatters:
+      simple:
+        format: '[%(asctime)s][%(name)s][%(levelname)s] - %(message)s'
+        datefmt: '%Y-%m-%d %H:%M:%S'
+  
+  verbose: false
+
+# =============================================================================
+# 联邦学习配置
+# =============================================================================
+federated:
+  num_users: 100               # 客户端总数
+  frac: 0.1                    # 每轮参与率 (10%)
+  dirichlet_alpha: 0.1         # Non-IID 程度 (越小越异构)
+  test_frac: 1.0               # 测试采样客户端比例
+  unequal: false               # 不均等数据划分
+  # 这个控制的是 数据量的不均等性  但是还没有实现
+  # dirichlet_alpha 控制的是标签分布的异构性（Non-IID程度）
+  # unequal 预期控制的是数据量的不均等性（每个客户端拥有的样本数量差异）
+# =============================================================================
+# 系统配置
+# =============================================================================
+system:
+  gpu: 0                       # GPU ID (-1 表示 CPU)
+  seed: 42                     # 随机种子
+  verbose: 1                   # 日志详细程度
+  stopping_rounds: 10          # 早停轮次
+
+# =============================================================================
+# 检查点配置
+# =============================================================================
+checkpoint:
+  enable: false                # 是否启用检查点
+  save_frequency: 10           # 保存频率 (每 N 轮)
+  save_client_weights: true    # 保存客户端权重
+  max_checkpoints: -1          # 最大保存数量 (-1 无限制)
+
+# =============================================================================
+# 日志配置 (由 conf/logger/*.yaml 覆盖)
+# =============================================================================
+# 注意: 日志配置通过 defaults 中的 logger 组选择
+# 使用方式:
+#   python main.py logger=tensorboard  # 默认
+#   python main.py logger=wandb        # WandB
+#   python main.py logger=none         # 禁用

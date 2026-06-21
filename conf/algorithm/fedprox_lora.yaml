@@ -1,0 +1,68 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# FedProx + LoRA - 联邦近端优化 + 低秩适应
+# =============================================================================
+# 
+# 结合 FedProx 的 proximal term 和 FedLoRA 的低秩适应，
+# 仅传输 LoRA 参数，同时防止本地模型偏离全局。
+#
+# 损失函数: L = L_task + (μ/2) * ||w_trainable - w_global_trainable||²
+# 传输内容: LoRA 参数 + MLP head
+#
+# 使用方式:
+#   python main.py algorithm=fedprox_lora
+#   python main.py algorithm=fedprox_lora algorithm.mu=0.1
+#   python main.py algorithm=fedprox_lora algorithm.lora_r=16
+#
+# =============================================================================
+
+name: fedprox_lora
+
+# =============================================================================
+# FedProx 核心参数
+# =============================================================================
+
+# proximal term 系数 (μ)
+# 越大 -> 本地更新越接近全局模型
+# 推荐范围: 0.001 ~ 1.0
+mu: 0.01
+
+# 优化器配置
+# FedProx+LoRA 推荐使用 Adam，因为自适应学习率更适合 LoRA 低秩参数优化
+optimizer: adam
+
+# =============================================================================
+# LoRA 参数
+# =============================================================================
+lora_r: 8
+lora_alpha: 16
+lora_train_mlp_head: true
+
+# =============================================================================
+# 服务端聚合配置
+# =============================================================================
+
+# 聚合方法
+server_agg_method: fedavg      # fedavg (默认) | alignment
+
+# 对齐度计算策略（仅当 server_agg_method=alignment）
+alignment_strategy: loo_mean   # loo_mean | standard_mean
+
+# 权重转换方式（仅当 server_agg_method=alignment）
+weight_transform: relu_normalize  # relu_normalize | softmax
+
+# Softmax 温度（仅当 weight_transform=softmax）
+softmax_temperature: 1.0
+
+# 权重平滑系数
+lambda_smooth: 0.0
+
+# =============================================================================
+# FedSDG 专用参数 (FedProx+LoRA 中忽略，保留以保持结构一致)
+# =============================================================================
+lambda1: 0.0
+lambda2: 0.0
+gate_penalty_type: unilateral
+lr_gate: 0.01
+grad_clip: 0.0

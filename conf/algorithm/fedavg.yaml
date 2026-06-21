@@ -1,0 +1,58 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# FedAvg - 联邦平均算法配置
+# =============================================================================
+# 
+# FedAvg 是标准的联邦学习算法，传输完整模型参数。
+# 作为 FedLoRA/FedSDG 的基准对比。
+#
+# 使用方式:
+#   python main.py algorithm=fedavg
+#   python main.py algorithm=fedavg dataset=cifar100 training.epochs=100
+#   python main.py algorithm=fedavg algorithm.server_agg_method=alignment
+#
+# =============================================================================
+
+name: fedavg
+
+# FedAvg 不使用 LoRA，但保留这些字段以保持配置结构一致
+# 这些值在 FedAvg 中会被忽略
+lora_r: 8
+lora_alpha: 16
+lora_train_mlp_head: true
+
+# =============================================================================
+# 服务端聚合配置
+# =============================================================================
+
+# 聚合方法
+server_agg_method: fedavg      # fedavg (默认) | alignment
+                               # - fedavg: 均匀加权平均（标准 FedAvg）
+                               # - alignment: 基于对齐度的加权聚合（实验性）
+
+# 对齐度计算策略（仅当 server_agg_method=alignment）
+alignment_strategy: loo_mean   # loo_mean (推荐) | standard_mean
+                               # - loo_mean: Leave-One-Out 平均（消除自相关偏差）
+                               # - standard_mean: 标准平均
+
+# 权重转换方式（仅当 server_agg_method=alignment）
+weight_transform: relu_normalize  # relu_normalize | softmax
+                                  # - relu_normalize: ReLU + 线性归一化（默认）
+                                  # - softmax: 保留负值影响，温度可调
+
+# Softmax 温度（仅当 weight_transform=softmax）
+softmax_temperature: 1.0
+
+# 权重平滑系数：weights = (1-λ)*weights + λ*(1/M)
+# 0 = 不平滑（默认），>0 = 插值到均匀分布（增加鲁棒性）
+lambda_smooth: 0.0
+
+# =============================================================================
+# FedSDG 专用参数 (FedAvg 中忽略，但保留以保持结构一致)
+# =============================================================================
+lambda1: 0.0
+lambda2: 0.0
+gate_penalty_type: unilateral
+lr_gate: 0.01
+grad_clip: 0.0

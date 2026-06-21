@@ -1,0 +1,20 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# 快速验证训练配置
+# =============================================================================
+# 
+# 用于快速验证代码正确性，不追求训练效果。
+# 
+# 使用方式:
+#   python main.py training=fast
+#   python main.py algorithm=fedsdg training=fast
+#
+# =============================================================================
+
+epochs: 2                      # 仅 2 轮
+local_ep: 1                    # 本地仅 1 轮
+local_bs: 32                   # 小批次
+lr: 0.001
+optimizer: sgd
+momentum: 0.5

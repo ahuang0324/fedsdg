@@ -1,0 +1,38 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# ImageNet-R (Rendition) 数据集配置
+# =============================================================================
+#
+# ImageNet-R 数据集特点:
+#   - 200 个类别 (ImageNet 子集，synset ID 命名)
+#   - 约 30,000 张图像
+#   - 多种艺术风格渲染 (art, cartoon, sketch, painting 等)
+#
+# 分区模式:
+#   - null (默认): 全局 Dirichlet 分区 (ImageNet-R 无天然域划分)
+#   - domain_dirichlet: 域内 Dirichlet 分区 (需要额外域信息)
+#
+# 使用方式:
+#   python main.py dataset=imagenet_r
+#   python main.py dataset=imagenet_r federated.num_users=20
+#   python main.py dataset=imagenet_r federated.dirichlet_alpha=0.5
+#
+# =============================================================================
+
+name: imagenet_r
+num_classes: 200
+num_channels: 3
+image_size: 224                # ViT 需要 resize 到 224
+
+# 分区模式
+# null = 使用默认的全局 Dirichlet 分区 (推荐)
+partition_mode: null
+
+# 内存缓存 (首次预加载 Resize+ToTensor 到内存，后续只做 Normalize)
+# 30K 张 224×224 约占 6.9GB 内存，可提速 5-10 倍
+cache_in_memory: false
+
+# 离线数据配置 (不支持)
+use_offline: false
+offline_data_root: ./datasets/preprocessed

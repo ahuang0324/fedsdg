@@ -1,0 +1,32 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# WandB 日志后端
+# @package _global_
+#
+# 使用方式:
+#   python main.py logger=wandb
+#   python main.py logger=wandb logging.wandb_mode=offline  # 离线模式
+#
+logging:
+  backend: wandb
+  
+  # Project：按数据集
+  wandb_project: "fl-${dataset.name}"      # 例如 fl-cifar100
+  
+  # Group：按同一"数据划分/实验设置"聚合（可选但很有用）
+  # 如果你有 dirichlet_alpha / iid / noniid 等字段，建议放进去
+  wandb_group: "${dataset.name}_alpha${federated.dirichlet_alpha}"
+  
+  # Run name：突出算法 + 关键超参（确保可读且近似唯一）
+  wandb_run_name: "${algorithm.name}_E${training.epochs}_lr${training.lr}_seed${system.seed}_${now:%m%d_%H%M}"
+  
+  wandb_job_type: "train"
+  wandb_tags:
+    - "${algorithm.name}"
+    - "${model.name}"
+    - "seed=${system.seed}"
+    - "alpha=${federated.dirichlet_alpha}"
+  
+  wandb_mode: offline
+  log_every_n_rounds: 1
+  save_config: true

@@ -1,0 +1,19 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# Stanford Cars 数据集配置
+# =============================================================================
+
+name: stanford_cars
+num_classes: 196
+num_channels: 3
+image_size: 224                # 原始图像大小不固定，统一resize到224
+
+# 离线数据配置 (不支持)
+use_offline: false
+offline_data_root: ./datasets/preprocessed
+
+# LMDB 加速模式
+# true: 使用预处理的 LMDB 数据库 (需先运行 convert_stanford_cars_to_lmdb.py)
+# false: 使用原始图像文件 (较慢，但无需预处理)
+use_lmdb: false

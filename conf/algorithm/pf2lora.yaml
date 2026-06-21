@@ -1,0 +1,82 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# PF2LoRA 算法配置
+#
+# 论文: "Personalized Federated Fine-tuning for Heterogeneous Data:
+#        An Automatic Rank Learning Approach via Two-Level LoRA"
+#        (Hao et al., ICLR 2026, arxiv 2503.03920)
+#
+# 核心思想:
+#   - 双路 LoRA 架构 (Shared + Private)，纯加性组合（无门控）
+#   - Shared LoRA (A_s, B_s): 参与服务器聚合，学习通用知识
+#   - Private LoRA (A_p, B_p): 本地保留，捕获客户端特有知识
+#   - 自动秩学习: 基于重要性分数对 Private LoRA 进行秩剪枝
+#
+# 使用方式:
+#   python main.py algorithm=pf2lora
+#   python main.py algorithm=pf2lora algorithm.lora_r_private=16
+#   python main.py algorithm=pf2lora algorithm.target_rank_ratio=0.5
+#
+# =============================================================================
+
+name: pf2lora
+
+# =============================================================================
+# LoRA 参数（双路架构）
+# =============================================================================
+
+lora_r: 8                      # Shared LoRA 秩（与其他 baseline 一致）
+lora_alpha: 16                 # 缩放因子 (2*lora_r)
+lora_r_private: 16             # Private LoRA 秩（r_max，剪枝前的初始秩）
+lora_train_mlp_head: true      # 训练分类头
+
+# =============================================================================
+# PF2LoRA 特有参数 —— 自动秩学习（Automatic Rank Learning）
+# =============================================================================
+
+enable_rank_pruning: true      # 是否启用重要性剪枝
+target_rank_ratio: 0.5         # 目标秩比例 (target_rank = lora_r_private * ratio = 8)
+pruning_start_round: 10        # 开始剪枝的轮次（warmup 阶段不剪枝）
+pruning_interval: 5            # 每隔几轮执行一次剪枝
+
+# =============================================================================
+# 服务端聚合
+# =============================================================================
+
+server_agg_method: fedavg      # 聚合方法: fedavg
+
+# =============================================================================
+# 双路架构参数（复用 FedSDG 的 LoRALayer，gate 固定为 1.0 实现纯加性）
+# =============================================================================
+
+# 门控固定为 1.0（纯加性组合: output = shared + private）
+fix_gate: true
+fixed_gate_value: 1.0
+gate_init_value: 100.0         # logit = 100 → sigmoid ≈ 1.0
+
+# 无正则化（PF2LoRA 不使用门控/私有参数惩罚）
+lambda1: 0.0                   # 无门控惩罚
+lambda2: 0.0                   # 无私有参数正则化
+gate_penalty_type: unilateral
+lr_gate: 0.0
+grad_clip: 0.0
+
+# 不使用 Dynamic Alignment
+use_dynamic_alignment: false
+da_floor_gamma: 0.1
+da_target_mode: floor
+use_da_scale: false
+
+# Head 模式: global（参与聚合）
+head_mode: global
+
+# gate 粒度（虽然 gate 固定，但需要指定以兼容 LoRALayer 初始化）
+gate_granularity: layer
+
+# =============================================================================
+# 优化器
+# =============================================================================
+
+optimizer: adam
+lr_head: null                  # 使用全局 lr

@@ -1,0 +1,46 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# Office-Home 数据集配置
+# =============================================================================
+#
+# Office-Home 数据集特点:
+#   - 4 个域: Art, Clipart, Product, Real_World
+#   - 65 个类别
+#   - 约 15,500 张图像
+#
+# 分区模式:
+#   - domain_dirichlet: 域内 Dirichlet 分区 (推荐，保留域异构性)
+#   - global_dirichlet: 全局 Dirichlet 分区 (忽略域信息)
+#
+# 使用方式:
+#   python main.py dataset=officehome
+#   python main.py dataset=officehome dataset.domains="['Art','Clipart']"
+#   python main.py dataset=officehome dataset.partition_mode=global_dirichlet
+#
+# =============================================================================
+
+name: officehome
+num_classes: 65
+num_channels: 3
+image_size: 224                # ViT 需要 resize 到 224
+
+# 域配置
+# null = 使用全部 4 个域
+# 或指定部分域: ['Art', 'Clipart', 'Product']
+domains: null
+
+# 分区模式
+# domain_dirichlet: 先按域分组，再在每个域内用 Dirichlet 分区 (推荐)
+# global_dirichlet: 忽略域，全局 Dirichlet 分区
+partition_mode: domain_dirichlet
+
+
+# 每个域的客户端数量 (仅 domain_dirichlet 模式有效)
+# null = 自动均分 (num_users / num_domains)
+# 或手动指定: {Art: 25, Clipart: 25, Product: 25, Real_World: 25}
+clients_per_domain: null
+
+# 离线数据配置 (不支持)
+use_offline: false
+offline_data_root: ./datasets/preprocessed

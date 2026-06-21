@@ -1,0 +1,73 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# FedALT-adapted 算法配置
+#
+# 论文: "FedALT: Federated Fine-Tuning through Adaptive Local Training
+#        with Rest-of-World LoRA" (Chen et al., 2025)
+#
+# 适配版本核心思想:
+#   - 复用 FedSDG 双路 LoRA 架构 (public + private 分支)
+#   - 反转训练角色：
+#     * Public 分支 (lora_A/B) → Global LoRA, 训练时冻结, 接收聚合结果
+#     * Private 分支 (lora_A/B_private) → Individual LoRA, 训练 + 上传聚合
+#   - Gate 作为 Mixer，动态混合 Global 和 Individual 两路输出
+#   - Individual LoRA 跨轮次持续演化，不被聚合重置
+#
+# 与完整 FedALT 的简化:
+#   - RoW LoRA → 简化为全局平均（所有客户端收到相同模型）
+#   - MoE Mixer → 复用 FedSDG 的 sigmoid gate
+#   - 通信开销与 FedSDG/FedLoRA 完全相同
+#
+# 使用方式:
+#   python main.py algorithm=fedalt
+#   python main.py algorithm=fedalt algorithm.lambda1=0.001 algorithm.lambda2=0.0005
+#
+# =============================================================================
+
+name: fedalt
+
+# =============================================================================
+# LoRA 参数（双路架构，复用 FedSDG 的 LoRA 注入）
+# =============================================================================
+
+lora_r: 8                      # LoRA 秩 (4-16 典型值)
+lora_alpha: 16                 # LoRA 缩放因子 (通常为 2*r)
+lora_train_mlp_head: true      # 训练分类头
+
+# =============================================================================
+# FedALT-adapted 特有参数
+# =============================================================================
+
+# 门控/Mixer 配置（复用 FedSDG 的 gate 机制混合 Global 和 Individual 分支）
+gate_granularity: fine         # fine: 逐层门控 | coarse: 全局门控
+gate_init_value: 0.0           # 门控初始化值 (sigmoid(0)=0.5, 两路等权)
+lr_gate: 0.1                   # 门控学习率
+fix_gate: false                # 是否固定门控（false: 可学习）
+
+# 正则化配置
+lambda1: 0.001                 # 门控稀疏惩罚系数
+lambda2: 0.0005                # Individual LoRA (private) L2 正则化系数
+gate_penalty_type: unilateral  # unilateral | bilateral
+grad_clip: 1.0                 # 梯度裁剪
+
+# =============================================================================
+# 服务端聚合配置
+# =============================================================================
+
+server_agg_method: fedavg      # 聚合方法: fedavg (默认) | alignment
+alignment_strategy: loo_mean
+weight_transform: softmax
+softmax_temperature: 0.3
+lambda_smooth: 0.0
+
+# =============================================================================
+# 其他参数
+# =============================================================================
+
+# Head 参数模式
+head_mode: global              # global: Head 参与聚合 | private: Head 不参与聚合
+lr_head: null                  # Head 学习率 (null 使用全局 lr)
+
+# 优化器配置
+optimizer: adam

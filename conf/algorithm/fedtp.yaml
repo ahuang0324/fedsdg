@@ -1,0 +1,89 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# FedTP - 两阶段 LoRA 联邦学习算法配置
+# =============================================================================
+# 
+# FedTP (Federated Two-Phase LoRA) 核心思想：
+# - 彻底去除门控机制，将训练解耦为两个连续阶段
+# - Phase 1 (全局训练): 仅激活共享 LoRA 分支，标准 FedAvg 联邦聚合
+# - Phase 2 (本地微调): 冻结共享 LoRA，仅训练私有 LoRA 分支，零通信
+# - 推理时: 共享分支 + 私有分支等比例直接相加（无门控权重）
+#
+# 对标价值：
+#   直接测试 FedSDG 动态对齐与门控机制是否具有不可替代的性能优势
+#
+# 使用方式:
+#   python main.py algorithm=fedtp
+#   python main.py algorithm=fedtp algorithm.phase1_epochs=50
+#   python main.py algorithm=fedtp training.epochs=80 algorithm.phase1_epochs=50
+#
+# =============================================================================
+
+name: fedtp
+
+# =============================================================================
+# LoRA 参数（双路架构，复用 FedSDG 的 LoRALayer）
+# =============================================================================
+
+lora_r: 8                      # LoRA 秩
+lora_alpha: 16                 # LoRA 缩放因子
+lora_train_mlp_head: true      # 训练分类头
+
+# =============================================================================
+# Two-Phase 核心参数
+# =============================================================================
+
+# Phase 1 全局训练轮次
+# - Phase 1 (0 ~ phase1_epochs-1): 全局训练，仅共享 LoRA + Head 参与训练和聚合
+# - Phase 2 (phase1_epochs ~ epochs-1): 本地微调，仅私有 LoRA + Head 参与训练，零通信
+# 建议值: 总轮次的 50%-65%，如 80 轮训练设为 50
+phase1_epochs: 50
+
+# =============================================================================
+# 服务端聚合配置（Phase 1 使用，Phase 2 不聚合）
+# =============================================================================
+
+server_agg_method: fedavg       # fedavg (默认) | alignment
+alignment_strategy: loo_mean    # loo_mean | standard_mean
+weight_transform: softmax       # softmax | relu_normalize
+softmax_temperature: 0.3
+lambda_smooth: 0.0
+
+# =============================================================================
+# FedSDG 兼容参数（FedTP 中不使用，保持结构一致）
+# =============================================================================
+
+# 正则化系数（全部禁用）
+lambda1: 0.0                   # 门控稀疏惩罚 — FedTP 不使用门控
+lambda2: 0.0                   # 私有参数正则化 — FedTP 不使用正则化
+gate_penalty_type: unilateral
+lr_gate: 0.0                   # 门控学习率 — FedTP 门控固定
+grad_clip: 1.0                 # 梯度裁剪
+
+# 固定门控配置（FedTP 始终固定门控）
+fix_gate: true                 # 始终固定门控（不学习）
+fixed_gate_value: 0.0          # Phase 1: m_k=0 (仅全局)；Phase 2 由代码切为 1.0
+gate_init_value: -100.0        # logit 形式，sigmoid(-100) ≈ 0
+gate_granularity: fine         # 保持与 FedSDG 一致
+
+# Head 参数模式（与 FedSDG 保持一致: global）
+head_mode: global              # Head 参与聚合（Phase 1），Phase 2 自然变为本地维护
+lr_head: null                  # Head 学习率（null 表示使用主学习率 lr）
+
+# Dynamic Alignment（FedTP 不使用）
+use_dynamic_alignment: false
+da_floor_gamma: 0.1
+da_target_mode: floor
+use_da_scale: false
+lr_da_scale: 0.01
+da_detach_private_rms: true
+
+# 门控 Warmup（FedTP 不使用）
+gate_warmup_rounds: 0
+
+# =============================================================================
+# 优化器配置
+# =============================================================================
+
+optimizer: adam                 # FedTP 使用 Adam

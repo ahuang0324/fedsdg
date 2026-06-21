@@ -1,0 +1,80 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# FedRep - 联邦表示学习算法配置
+# =============================================================================
+# 
+# FedRep (Federated Representation Learning) 将模型分为两部分：
+# - Backbone (表示层): 参与联邦聚合，学习共享表示
+# - Head (分类头): 本地维护，学习个性化分类器
+#
+# 训练流程（每轮本地训练）:
+#   Step 1: 冻结 Head，训练 Backbone (fedrep_rep_epochs 个 epoch)
+#   Step 2: 冻结 Backbone，训练 Head (fedrep_head_epochs 个 epoch)
+#
+# 使用方式:
+#   python main.py algorithm=fedrep
+#   python main.py algorithm=fedrep algorithm.fedrep_head_epochs=10
+#   python main.py algorithm=fedrep algorithm.lr_head=0.01
+#
+# 参考论文:
+#   Collins et al., "Exploiting Shared Representations for Personalized 
+#   Federated Learning", ICML 2021
+#
+# =============================================================================
+
+name: fedrep
+
+# =============================================================================
+# FedRep 特有参数
+# =============================================================================
+
+# 分步训练 epoch 配置
+fedrep_rep_epochs: 1       # Step 1: 训练 Backbone (LoRA) 的 epoch 数
+                           # 原论文建议 τ=1
+
+fedrep_head_epochs: 4      # Step 2: 训练 Head 的 epoch 数
+                           # 原论文建议 ν=5-10，视数据集复杂度调整
+
+# Head 学习率（可与 Backbone 不同）
+lr_head: 0.001             # Head 优化器学习率
+                           # 如果设为 null，则使用与 Backbone 相同的 lr
+
+# =============================================================================
+# LoRA 参数（FedRep 使用 LoRA 作为 Backbone）
+# =============================================================================
+
+lora_r: 8                  # LoRA 秩 (4-16 典型值)
+lora_alpha: 16             # LoRA 缩放因子 (通常为 2*r)
+lora_train_mlp_head: true  # 始终为 true（Head 需要训练）
+
+# =============================================================================
+# 服务端聚合配置
+# =============================================================================
+
+# 聚合方法（仅聚合 Backbone/LoRA 参数）
+server_agg_method: fedavg  # fedavg (默认) | alignment
+                           # FedRep 原论文使用 fedavg
+
+# 对齐度计算策略（仅当 server_agg_method=alignment）
+alignment_strategy: loo_mean
+
+# 权重转换方式（仅当 server_agg_method=alignment）
+weight_transform: softmax
+softmax_temperature: 0.3
+lambda_smooth: 0.0
+
+# =============================================================================
+# 其他参数（保持与其他算法结构一致，部分无效）
+# =============================================================================
+
+# FedSDG 专用参数（FedRep 中忽略）
+lambda1: 0.0
+lambda2: 0.0
+gate_penalty_type: unilateral
+lr_gate: 0.01
+grad_clip: 0.0
+
+# 优化器配置
+# FedRep 推荐使用 Adam
+optimizer: adam

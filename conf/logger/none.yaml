@@ -1,0 +1,8 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# 禁用日志记录
+# @package _global_
+logging:
+  backend: none
+  log_every_n_rounds: 1
+  save_config: false

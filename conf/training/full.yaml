@@ -1,0 +1,20 @@
+# Copyright (c) JLU, NODI, Huimin Huang. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# =============================================================================
+# 完整训练配置
+# =============================================================================
+# 
+# 用于正式实验，追求最佳训练效果。
+# 
+# 使用方式:
+#   python main.py training=full
+#   python main.py algorithm=fedsdg dataset=cifar100 training=full
+#
+# =============================================================================
+
+epochs: 200                    # 更多训练轮次
+local_ep: 5                    # 本地 5 轮
+local_bs: 128                  # 标准批次
+lr: 0.001
+optimizer: adam                # Adam 优化器
+momentum: 0.5

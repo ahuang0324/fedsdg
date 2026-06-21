@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+title: "FedSDG: Federated Structure-Decoupled Gating"
+message: "If you use this code, please cite the corresponding paper."
+type: software
+authors:
+  - name: "FedSDG authors"
+repository-code: "https://github.com/<your-org-or-user>/Fedsdg"
+license: Apache-2.0
+version: 1.0.0
+date-released: 2026-06-22
