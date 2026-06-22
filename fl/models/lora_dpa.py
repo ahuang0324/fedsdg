@@ -75,7 +75,7 @@ class DualPathLoRALayer(nn.Module):
         self.da_detach_private_rms = da_detach_private_rms
         self._da_reported_this_round = False
         
-        # 用于推理时临时覆盖的动态混合比例
+        # Dynamic mixing ratio used during inference.
         self._dynamic_mix_ratio = None
         
         # Dropout

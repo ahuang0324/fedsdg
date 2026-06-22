@@ -165,7 +165,7 @@ The default WandB configuration uses offline mode. Configure your own WandB acco
 - Use `system.seed=<seed>` to control the random seed.
 - Use `federated.dirichlet_alpha=<alpha>` to control label-distribution heterogeneity.
 - Use `federated.frac=<ratio>` to control the client participation rate.
-- Use `training=fast` only for environment checks or quick debugging.
+- Use `training=fast` only for environment checks or short dry runs.
 
 ## Citation
 

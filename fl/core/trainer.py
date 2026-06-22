@@ -302,7 +302,6 @@ class FederatedTrainer:
         logger_group = getattr(self.hydra_cfg, 'logger', None) if self.hydra_cfg else None
         logging_cfg = getattr(logger_group, 'logging', None) if logger_group else None
         backend = getattr(logging_cfg, 'backend', 'tensorboard') if logging_cfg else 'tensorboard'
-        # getattr 是 Python 的内置函数，用于动态获取对象的属性值。getattr(object, name, default)
         
         # WandB 使用 hydra_run_dir，TensorBoard 使用 log_dir
         logger_dir = self.hydra_run_dir if backend == 'wandb' else self.log_dir
@@ -387,8 +386,8 @@ class FederatedTrainer:
         """
         预占 GPU 显存，防止被其他进程抢占
         
-        策略：用模型池中的模型做一次 dummy forward+backward pass，
-        实测训练时的峰值显存，然后预占到该水平。
+        The estimate is obtained by running one synthetic forward/backward pass
+        with the pooled model and reserving memory near the observed peak.
         
         这比公式估算准确得多，因为激活值（ViT 的中间特征图）
         是显存的大头，无法通过参数量推算。
@@ -400,31 +399,29 @@ class FederatedTrainer:
             torch.cuda.reset_peak_memory_stats()
             baseline_mem = torch.cuda.memory_allocated()
             
-            # 用模型池中的模型做一次 dummy forward+backward
+            # Measure the peak memory of a representative training step.
             model = self.model_pool.get_model(0)
             model.train()
             
-            # 构造 dummy 输入（与实际训练一致的 shape）
+            # Use the same tensor shape as the configured training batch.
             bs = self.args.local_bs
             img_size = getattr(self.args, 'image_size', 224)
             in_channels = 3
-            dummy_input = torch.randn(bs, in_channels, img_size, img_size, device=self.device)
+            sample_input = torch.randn(bs, in_channels, img_size, img_size, device=self.device)
             
-            # 使用正确的类别数创建 dummy 标签
-            num_classes = getattr(self.args, 'num_classes', 10)  # 默认10类，但会从配置获取
-            dummy_labels = torch.randint(0, num_classes, (bs,), device=self.device)
+            num_classes = getattr(self.args, 'num_classes', 10)
+            sample_labels = torch.randint(0, num_classes, (bs,), device=self.device)
             
-            # Forward + backward（模拟真实训练）
             criterion = nn.CrossEntropyLoss()
-            logits = model(dummy_input)
-            loss = criterion(logits, dummy_labels)
+            logits = model(sample_input)
+            loss = criterion(logits, sample_labels)
             loss.backward()
             
             # 记录训练峰值
             train_peak = torch.cuda.max_memory_allocated()
             
-            # 清理 dummy 数据和梯度
-            del dummy_input, dummy_labels, logits, loss
+            # Keep the CUDA allocator cache warm after removing temporary tensors.
+            del sample_input, sample_labels, logits, loss
             for param in model.parameters():
                 param.grad = None
             
@@ -444,7 +441,7 @@ class FederatedTrainer:
                 # 分配额外张量，撑大 PyTorch 缓存池
                 warmup_tensor = torch.empty(extra_needed // 4, dtype=torch.float32, device='cuda')
                 del warmup_tensor  # 释放张量，但缓存池仍持有显存
-                # 注意：不调用 torch.cuda.empty_cache()
+                # Keep reserved memory in PyTorch's CUDA caching allocator.
             
             reserved_mb = torch.cuda.memory_reserved() / 1024 / 1024
             cprint(f"\n[显存预占] 实测训练峰值: {train_peak / 1024 / 1024:.0f}MB")
@@ -586,7 +583,7 @@ class FederatedTrainer:
                 cprint(f"{'='*70}")
                 self._fedtp_switch_to_phase2()
         
-        # 心跳信息：仅输出到终端，不写入文件
+        # Round progress is printed to the terminal only.
         if self.args.alg == 'fedtp':
             phase_str = f"Phase {self.algorithm_strategy.current_phase}"
             print(f'\n | \u5168\u5c40\u8bad\u7ec3\u8f6e\u6b21 : {epoch+1} ({phase_str}) |\n')
@@ -724,15 +721,7 @@ class FederatedTrainer:
         model_flags = strategy.get_model_pool_flags()
         is_fedsdg = model_flags['is_fedsdg']
         
-        # FedSDG sanity check（仅第一轮第一个客户端，排除 FedTP）
-        sanity_check_key = None
-        sanity_check_before = None
         is_actual_fedsdg = (self.args.alg == 'fedsdg')
-        if is_actual_fedsdg and epoch == 0 and len(selected_clients) > 0:
-            for key in global_state_cache.keys():
-                if '_private' in key or 'lambda_k' in key:
-                    sanity_check_key = key
-                    break
         
         # ========================================
         # 阶段1: 客户端本地训练
@@ -751,37 +740,10 @@ class FederatedTrainer:
                 **model_flags
             )
             
-            # DA 诊断：每轮首个客户端重置，输出一行摘要
+            # Reset Dynamic Alignment statistics once per round.
             if client_idx == 0:
                 from ..models.lora import reset_da_diagnostics
                 reset_da_diagnostics(local_model)
-            
-            # Sanity check: 记录训练前的私有参数
-            if sanity_check_key and client_idx == 0:
-                try:
-                    # 安全的 tensor 克隆，处理 CUDA 错误
-                    if torch.cuda.is_available():
-                        torch.cuda.synchronize()
-                    
-                    param_tensor = local_model.state_dict()[sanity_check_key]
-                    
-                    # 检查张量有效性
-                    if not torch.isnan(param_tensor).any() and not torch.isinf(param_tensor).any():
-                        sanity_check_before = param_tensor.clone()
-                    else:
-                        cprint(f"[警告] Sanity check 跳过无效参数: {sanity_check_key}")
-                        sanity_check_before = None
-                        
-                    if torch.cuda.is_available():
-                        torch.cuda.synchronize()
-                        
-                except RuntimeError as e:
-                    if "CUDA error" in str(e):
-                        cprint(f"[警告] Sanity check CUDA 错误: {e}")
-                        cprint(f"[警告] 跳过 sanity check，继续训练...")
-                        sanity_check_before = None
-                    else:
-                        raise e
             
             # 本地训练
             local_trainer = LocalUpdate(
@@ -816,41 +778,10 @@ class FederatedTrainer:
             if public_w is not None:
                 local_weights.append(public_w)
             
-            # Sanity check: 验证私有参数已更新（仅 FedSDG）
-            if sanity_check_key and client_idx == 0 and sanity_check_before is not None:
-                try:
-                    # 安全的 tensor 克隆，处理 CUDA 错误
-                    if torch.cuda.is_available():
-                        torch.cuda.synchronize()
-                    
-                    param_tensor = local_model.state_dict()[sanity_check_key]
-                    
-                    # 检查张量有效性
-                    if not torch.isnan(param_tensor).any() and not torch.isinf(param_tensor).any():
-                        sanity_check_after = param_tensor.clone()
-                        diff_norm = (sanity_check_after - sanity_check_before).norm().item()
-                        if diff_norm < 1e-10:
-                            cprint(f"\n[警告] FedSDG Sanity Check 失败!")
-                            cprint(f"  私有参数 '{sanity_check_key}' 训练前后无变化")
-                        else:
-                            cprint(f"\n[FedSDG Sanity Check] 通过 (diff_norm={diff_norm:.6f})")
-                    else:
-                        cprint(f"[警告] Sanity check 跳过无效参数: {sanity_check_key}")
-                        
-                    if torch.cuda.is_available():
-                        torch.cuda.synchronize()
-                        
-                except RuntimeError as e:
-                    if "CUDA error" in str(e):
-                        cprint(f"[警告] Sanity check CUDA 错误: {e}")
-                        cprint(f"[警告] 跳过 sanity check 验证...")
-                    else:
-                        raise e
-            
             local_losses.append(loss)
             train_metrics_list.append(train_metrics)
             
-            # Optional diagnostics (only FedSDG, excluding FedTP).
+            # Optional FedSDG diagnostics.
             if is_actual_fedsdg and epoch % 5 == 0 and client_idx == 0 and getattr(self.args, 'verbose', 0) >= 2:
                 self._log_fedsdg_diagnostics(epoch, idx, local_model)
         

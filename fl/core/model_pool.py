@@ -9,7 +9,7 @@
 
 设计原则：
 - pool_size=1 时串行复用单个模型实例
-- 未来可扩展到 pool_size>1 支持多 worker 并行
+- pool_size>1 可用于多 worker 并行训练
 - 每次使用前必须完全重置状态，避免污染
 
 Optimization:
@@ -36,7 +36,7 @@ class ModelPool:
     - 支持 FedSDG 私有状态注入
     
     Attributes:
-        pool_size: 池中模型数量（当前固定为 1，未来可扩展）
+        pool_size: 池中模型数量
         device: 模型运行设备
         _models: 模型实例列表
         

@@ -36,7 +36,6 @@ defaults:
 hydra:
   run:
     # 输出目录: outputs/YYYY-MM-DD/HHMMSS_算法_E轮次_数据集_alpha划分_seed种子_备注/
-    # 注意: experiment_note 应该在脚本中预处理，确保以 _ 开头（如果非空）
     dir: ${oc.env:PROJECT_ROOT,outputs}/${now:%Y-%m-%d}/${now:%H%M%S}_${algorithm.name}_E${training.epochs}_${dataset.name}_a${federated.dirichlet_alpha}_seed${system.seed}${training.experiment_note}
   
   sweep:
@@ -83,10 +82,9 @@ federated:
   frac: 0.1                    # 每轮参与率 (10%)
   dirichlet_alpha: 0.1         # Non-IID 程度 (越小越异构)
   test_frac: 1.0               # 测试采样客户端比例
-  unequal: false               # 不均等数据划分
-  # 这个控制的是 数据量的不均等性  但是还没有实现
-  # dirichlet_alpha 控制的是标签分布的异构性（Non-IID程度）
-  # unequal 预期控制的是数据量的不均等性（每个客户端拥有的样本数量差异）
+  unequal: false               # 是否启用不均等样本数量划分
+  # dirichlet_alpha controls label-distribution heterogeneity.
+  # unequal controls client sample-count imbalance when supported by the dataset loader.
 # =============================================================================
 # 系统配置
 # =============================================================================
@@ -108,7 +106,6 @@ checkpoint:
 # =============================================================================
 # 日志配置 (由 conf/logger/*.yaml 覆盖)
 # =============================================================================
-# 注意: 日志配置通过 defaults 中的 logger 组选择
 # 使用方式:
 #   python main.py logger=tensorboard  # 默认
 #   python main.py logger=wandb        # WandB

@@ -3,14 +3,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Structured Configs - 使用 Dataclasses 定义配置结构
+Structured Hydra configuration definitions.
 
-config.yaml 是填好的“表格”，那么这个文件就是“表格的格式定义”——它规定了有哪些填空题，每个空应该填数字还是文字，以及默认填什么。
-
-相当于argeparse 中创建一个对象，然后不断的add
-
-提供类型检查和 IDE 补全支持。
-所有配置类都注册到 Hydra ConfigStore。
+The dataclasses in this module define the typed schema and default values for
+the YAML configuration files under conf/. They also provide IDE completion and
+runtime validation through Hydra's ConfigStore.
 
 配置层级:
     Config (根配置)
@@ -33,7 +30,6 @@ from omegaconf import MISSING
 # Algorithm Configs
 # =============================================================================
 
-# @dataclass 是 Python 3.7+ 的装饰器，用于自动生成常用方法，简化数据类的定义。
 @dataclass
 class AlgorithmConfig:
     """算法配置基类"""
@@ -753,5 +749,4 @@ def register_configs() -> None:
     cs.store(group="system", name="base_system", node=SystemConfig)
     cs.store(group="checkpoint", name="base_checkpoint", node=CheckpointConfig)
     cs.store(group="logging", name="base_logging", node=LoggingConfig)
-
 

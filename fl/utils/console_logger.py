@@ -24,7 +24,7 @@ Usage:
     # 在任何模块中使用
     cprint("信息")                      # 使用全局模式
     cprint("信息", to_console=False)    # 仅写入文件
-    cprint("信息", to_file=False)       # 仅输出到终端（心跳信息）
+    cprint("信息", to_file=False)       # 仅输出到终端
 """
 
 import sys
@@ -62,7 +62,6 @@ def init_console_logger(log_path: str) -> None:
     """
     global _log_file, _log_path
     
-    # 关闭旧文件（如果有）
     if _log_file is not None:
         _log_file.close()
     

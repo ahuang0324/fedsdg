@@ -17,9 +17,7 @@ momentum: 0.5                  # SGD 动量
 num_workers: 4                # DataLoader 子进程数
 prefetch_factor: 2             # 每 worker 预取 batch 数（仅 num_workers>0 时生效）
 
-# 实验备注（可选）
-# 用于在输出目录名和日志文件名后添加自定义标识
-# 示例: training.experiment_note="_loo_mean_test"
+# Optional suffix for output directory names.
 experiment_note: ""            # 实验备注，默认为空
 
 # 控制台日志配置
@@ -36,8 +34,7 @@ evaluation:
   eval_start_epoch: 0          # 从第几轮开始评估（0=从头开始）
                                 # 负数表示最后N轮，如 -10 表示仅最后10轮评估
                                 # 配合 eval_freq 使用，可大幅加速训练
-  # 注意: 评估时采样的客户端比例由 federated.test_frac 控制（默认 0.3）
-  # 请勿在此处配置 test_frac，以避免与 federated.test_frac 产生歧义
+  # Client sampling for evaluation is controlled by federated.test_frac.
 
 # =============================================================================
 # 数据划分配置
@@ -59,10 +56,10 @@ early_stopping:
 # 指标配置
 # =============================================================================
 metrics:
-  local_stats: true            # 启用本地统计指标 (std, p10, p50, p90)
-  drift: true                  # 启用漂移诊断指标 (drift_norm, update_norm)
-  fedsdg_gate: true            # 启用 FedSDG 门控指标 (lambda_mean, etc.)
-  fedsdg_reg: true             # 启用 FedSDG 正则化损失指标
+  local_stats: true            # 本地统计指标 (std, p10, p50, p90)
+  drift: true                  # 客户端漂移与全局更新指标
+  fedsdg_gate: true            # FedSDG 门控指标 (lambda_mean, etc.)
+  fedsdg_reg: true             # FedSDG 正则化损失指标
 
 # =============================================================================
 # 最佳模型保存配置

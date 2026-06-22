@@ -153,13 +153,8 @@ def flatten_config(config: dict[str, any], dataset: str = None) -> dict[str, Any
     Returns:
         Flat dictionary suitable for argparse
 
-    功能描述：
-        将嵌套的配置结构（即多层字典）展平（Flatten）为命令行参数风格的格式。
-    Args (输入参数)：
-        config: 嵌套的配置字典（比如你之前看到的包含 datasets: { cifar100: {...} } 的多层字典）。
-        dataset: 数据集名称，用于提取该数据集特有的设置（例如指定为 cifar100，函数就会去 datasets 下面找对应的参数）。
-    Returns (返回值)：
-        返回一个扁平的字典，该字典的格式适合 argparse（Python 命令行解析工具）使用。
+    This helper preserves the argparse-style option names used by the
+    training code while allowing defaults to be loaded from nested YAML files.
     """
     flat = {}
     
@@ -173,8 +168,7 @@ def flatten_config(config: dict[str, any], dataset: str = None) -> dict[str, Any
     elif 'dataset' in config:
         flat['dataset'] = config['dataset']
     
-    # Get dataset-specific settings
-    # 使用 DEFAULT_DATASET_FALLBACK 作为兜底值（用于从 datasets 嵌套结构中提取配置）
+    # Load dataset-specific defaults when present.
     dataset_name = flat.get('dataset', DEFAULT_DATASET_FALLBACK)
     if 'datasets' in config and dataset_name in config['datasets']:
         ds_config = config['datasets'][dataset_name]

@@ -582,7 +582,6 @@ class LocalUpdate(object):
                 if self.args.alg in ('fedsdg', 'feddpa', 'pf2lora', 'fedalt') and getattr(self.args, 'grad_clip', 0) > 0:
                     try:
                         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), self.args.grad_clip)
-                        # 检查裁剪后的梯度范数
                         if not torch.isfinite(grad_norm):
                             print(f"  [ERROR] Invalid grad_norm after clipping: {grad_norm} at Round {global_round}, Epoch {iter}, Batch {batch_idx}")
                             model.zero_grad()
@@ -596,7 +595,7 @@ class LocalUpdate(object):
                 if self.args.alg == 'fedsdg' and batch_idx == 0 and iter == 0 and in_warmup:
                     print(f"  [Gate Warmup] Round {global_round}/{gate_warmup_rounds}: λ₁=0 (warmup active)")
                 
-                # Optional gradient diagnostics for gate and da_scale parameters.
+                # Optional gradient statistics for gate and da_scale parameters.
                 if self.args.alg == 'fedsdg' and batch_idx == 0 and iter == 0 and getattr(self.args, 'verbose', 0) >= 2:
                     _found_gate, _found_scale = False, False
                     for name, param in model.named_parameters():
